@@ -2,10 +2,12 @@ mod azdo;
 mod config;
 mod error;
 
+use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use tokio::runtime::Builder as RuntimeBuilder;
 use tracing_subscriber::EnvFilter;
 
 use crate::azdo::AzdoClient;
@@ -15,19 +17,19 @@ use crate::error::AzdoError;
 #[derive(Parser, Debug)]
 #[command(name = "azdo", version, about = "CLI/TUI for Azure DevOps Server 2020")]
 struct Cli {
-    /// Path to config file (default: platform config dir / azdo / config.toml)
+    /// Path to config file (default: platform config dir / azdo / config.toml).
     #[arg(long, global = true)]
     config: Option<PathBuf>,
 
-    /// Override server URL (e.g. https://azdo.company.local/tfs)
+    /// Override server URL (e.g. `https://azdo.company.local/tfs`).
     #[arg(long, global = true)]
     server: Option<String>,
 
-    /// Override collection name
+    /// Override collection name.
     #[arg(long, global = true)]
     collection: Option<String>,
 
-    /// Override project name
+    /// Override project name.
     #[arg(long, global = true)]
     project: Option<String>,
 
@@ -42,19 +44,18 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
-        )
-        .with_writer(std::io::stderr)
-        .try_init();
+    drop(
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
+            )
+            .with_writer(io::stderr)
+            .try_init(),
+    );
 
     let cli = Cli::parse();
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
+    let runtime = match RuntimeBuilder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("error: cannot init tokio runtime: {e}");
@@ -85,14 +86,14 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
 }
 
 fn apply_overrides(cfg: &mut Config, cli: &Cli) {
-    if let Some(s) = &cli.server {
-        cfg.server = s.clone();
+    if let Some(s) = cli.server.as_ref() {
+        cfg.server.clone_from(s);
     }
-    if let Some(c) = &cli.collection {
-        cfg.collection = c.clone();
+    if let Some(c) = cli.collection.as_ref() {
+        cfg.collection.clone_from(c);
     }
-    if let Some(p) = &cli.project {
-        cfg.project = p.clone();
+    if let Some(p) = cli.project.as_ref() {
+        cfg.project.clone_from(p);
     }
 }
 
@@ -101,7 +102,7 @@ async fn cmd_ping(client: &AzdoClient) -> Result<(), AzdoError> {
     println!(
         "OK {} (project \"{}\" accessible)",
         status,
-        client.project_name()
+        client.project_name(),
     );
     Ok(())
 }

@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::env;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -7,32 +9,32 @@ use serde::Deserialize;
 use crate::error::{AzdoError, AzdoResult};
 
 #[derive(Debug, Deserialize)]
-pub struct Config {
-    pub server: String,
-    pub collection: String,
-    pub project: String,
+pub(crate) struct Config {
+    pub(crate) server: String,
+    pub(crate) collection: String,
+    pub(crate) project: String,
     #[serde(default = "default_api_version")]
-    pub api_version: String,
+    pub(crate) api_version: String,
     #[serde(default)]
-    pub auth: AuthConfig,
-    #[allow(dead_code)]
+    pub(crate) auth: AuthConfig,
+    #[allow(dead_code, reason = "wired up by later commands")]
     #[serde(default)]
-    pub wiki: Option<WikiConfig>,
-    #[allow(dead_code)]
+    pub(crate) wiki: Option<WikiConfig>,
+    #[allow(dead_code, reason = "wired up by later commands")]
     #[serde(default)]
-    pub states: BTreeMap<String, String>,
-    #[allow(dead_code)]
+    pub(crate) states: BTreeMap<String, String>,
+    #[allow(dead_code, reason = "wired up by later commands")]
     #[serde(default)]
-    pub products: BTreeMap<String, ProductConfig>,
-    #[allow(dead_code)]
+    pub(crate) products: BTreeMap<String, ProductConfig>,
+    #[allow(dead_code, reason = "wired up by later commands")]
     #[serde(default)]
-    pub profiles: BTreeMap<String, ProfileConfig>,
+    pub(crate) profiles: BTreeMap<String, ProfileConfig>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct AuthConfig {
+pub(crate) struct AuthConfig {
     #[serde(default = "default_pat_env")]
-    pub pat_env: String,
+    pub(crate) pat_env: String,
 }
 
 impl Default for AuthConfig {
@@ -43,44 +45,44 @@ impl Default for AuthConfig {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "wired up by later commands")]
 #[derive(Debug, Deserialize)]
-pub struct WikiConfig {
-    pub id: String,
-    pub daily_path: String,
+pub(crate) struct WikiConfig {
+    pub(crate) id: String,
+    pub(crate) daily_path: String,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "wired up by later commands")]
 #[derive(Debug, Deserialize)]
-pub struct ProductConfig {
-    pub build_definition_id: Option<u32>,
-    pub test_state: Option<String>,
-    pub test_comment_template: Option<String>,
+pub(crate) struct ProductConfig {
+    pub(crate) build_definition_id: Option<u32>,
+    pub(crate) test_state: Option<String>,
+    pub(crate) test_comment_template: Option<String>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "wired up by later commands")]
 #[derive(Debug, Deserialize)]
-pub struct ProfileConfig {
+pub(crate) struct ProfileConfig {
     #[serde(default)]
-    pub users: Vec<String>,
+    pub(crate) users: Vec<String>,
 }
 
 fn default_api_version() -> String {
-    "6.0".to_string()
+    "6.0".to_owned()
 }
 
 fn default_pat_env() -> String {
-    "AZDO_PAT".to_string()
+    "AZDO_PAT".to_owned()
 }
 
-pub struct Pat(String);
+pub(crate) struct Pat(String);
 
 impl Pat {
-    pub fn new(value: String) -> Self {
+    pub(crate) const fn new(value: String) -> Self {
         Self(value)
     }
 
-    pub fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -92,7 +94,7 @@ impl fmt::Debug for Pat {
 }
 
 impl Config {
-    pub fn load(path: Option<&Path>) -> AzdoResult<Self> {
+    pub(crate) fn load(path: Option<&Path>) -> AzdoResult<Self> {
         let resolved = match path {
             Some(p) => p.to_path_buf(),
             None => default_config_path()
@@ -104,20 +106,20 @@ impl Config {
                 resolved.display()
             )));
         }
-        let raw = std::fs::read_to_string(&resolved)?;
-        let cfg: Config = toml::from_str(&raw)?;
+        let raw = fs::read_to_string(&resolved)?;
+        let cfg: Self = toml::from_str(&raw)?;
         cfg.validate()?;
         Ok(cfg)
     }
 
     #[cfg(test)]
-    pub fn from_str_for_tests(raw: &str) -> AzdoResult<Self> {
-        let cfg: Config = toml::from_str(raw)?;
+    pub(crate) fn from_str_for_tests(raw: &str) -> AzdoResult<Self> {
+        let cfg: Self = toml::from_str(raw)?;
         cfg.validate()?;
         Ok(cfg)
     }
 
-    pub fn validate(&self) -> AzdoResult<()> {
+    pub(crate) fn validate(&self) -> AzdoResult<()> {
         if self.server.trim().is_empty() {
             return Err(AzdoError::Config("`server` is empty".into()));
         }
@@ -139,40 +141,55 @@ impl Config {
         Ok(())
     }
 
-    pub fn read_pat(&self) -> AzdoResult<Pat> {
-        match std::env::var(&self.auth.pat_env) {
-            Ok(v) if !v.is_empty() => Ok(Pat::new(v)),
-            _ => Err(AzdoError::PatMissing(self.auth.pat_env.clone())),
-        }
+    pub(crate) fn read_pat(&self) -> AzdoResult<Pat> {
+        env::var(&self.auth.pat_env).map_or_else(
+            |_| Err(AzdoError::PatMissing(self.auth.pat_env.clone())),
+            |v| {
+                if v.is_empty() {
+                    Err(AzdoError::PatMissing(self.auth.pat_env.clone()))
+                } else {
+                    Ok(Pat::new(v))
+                }
+            },
+        )
     }
 }
 
-/// Resolve default config path:
-///   Windows: %APPDATA%\azdo\config.toml
-///   Linux:   $XDG_CONFIG_HOME/azdo/config.toml, fallback $HOME/.config/azdo/config.toml
-pub fn default_config_path() -> Option<PathBuf> {
+/// Resolve default config path.
+///
+/// - Windows: `%APPDATA%\azdo\config.toml`
+/// - Linux: `$XDG_CONFIG_HOME/azdo/config.toml`, fallback `$HOME/.config/azdo/config.toml`
+pub(crate) fn default_config_path() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        std::env::var_os("APPDATA").map(|s| PathBuf::from(s).join("azdo").join("config.toml"))
+        env::var_os("APPDATA").map(|s| PathBuf::from(s).join("azdo").join("config.toml"))
     }
     #[cfg(not(windows))]
     {
-        if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-            Some(PathBuf::from(xdg).join("azdo").join("config.toml"))
-        } else {
-            std::env::var_os("HOME").map(|h| {
-                PathBuf::from(h)
-                    .join(".config")
-                    .join("azdo")
-                    .join("config.toml")
-            })
-        }
+        env::var_os("XDG_CONFIG_HOME").map_or_else(
+            || {
+                env::var_os("HOME").map(|h| {
+                    PathBuf::from(h)
+                        .join(".config")
+                        .join("azdo")
+                        .join("config.toml")
+                })
+            },
+            |xdg| Some(PathBuf::from(xdg).join("azdo").join("config.toml")),
+        )
     }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "tests legitimately panic on bad fixtures"
+)]
 mod tests {
-    use super::*;
+    use super::{AzdoError, Config, Pat};
 
     const SAMPLE: &str = r#"
 server = "https://azdo.company.local/tfs"
@@ -199,21 +216,30 @@ test_state = "Ready for Test"
 users = ["Ivan Petrov", "Maria Ivanova"]
 "#;
 
+    fn parse(raw: &str) -> Config {
+        Config::from_str_for_tests(raw).unwrap_or_else(|e| panic!("must parse: {e}"))
+    }
+
     #[test]
     fn parses_full_config() {
-        let cfg = Config::from_str_for_tests(SAMPLE).expect("must parse");
+        let cfg = parse(SAMPLE);
         assert_eq!(cfg.server, "https://azdo.company.local/tfs");
         assert_eq!(cfg.project, "Customs");
         assert_eq!(cfg.api_version, "6.0");
         assert_eq!(cfg.auth.pat_env, "AZDO_PAT");
-        assert_eq!(cfg.states.get("test").unwrap(), "Ready for Test");
         assert_eq!(
-            cfg.products.get("declaration").unwrap().build_definition_id,
-            Some(42)
+            cfg.states.get("test").map(String::as_str),
+            Some("Ready for Test"),
         );
         assert_eq!(
-            cfg.profiles.get("support").unwrap().users,
-            vec!["Ivan Petrov", "Maria Ivanova"]
+            cfg.products
+                .get("declaration")
+                .and_then(|p| p.build_definition_id),
+            Some(42),
+        );
+        assert_eq!(
+            cfg.profiles.get("support").map(|p| p.users.as_slice()),
+            Some(&["Ivan Petrov".to_owned(), "Maria Ivanova".to_owned()][..]),
         );
     }
 
@@ -224,7 +250,7 @@ server = "https://x/tfs"
 collection = "Col"
 project = "P"
 "#;
-        let cfg = Config::from_str_for_tests(raw).expect("must parse");
+        let cfg = parse(raw);
         assert_eq!(cfg.api_version, "6.0");
         assert_eq!(cfg.auth.pat_env, "AZDO_PAT");
     }
@@ -236,7 +262,9 @@ server = "azdo.company.local"
 collection = "Col"
 project = "P"
 "#;
-        let err = Config::from_str_for_tests(raw).expect_err("must reject");
+        let err = Config::from_str_for_tests(raw)
+            .err()
+            .unwrap_or_else(|| panic!("must reject"));
         assert!(matches!(err, AzdoError::Config(_)), "got {err:?}");
     }
 
@@ -247,15 +275,23 @@ server = ""
 collection = "Col"
 project = "P"
 "#;
-        let err = Config::from_str_for_tests(raw).expect_err("must reject");
-        assert!(matches!(err, AzdoError::Config(_)));
+        let err = Config::from_str_for_tests(raw)
+            .err()
+            .unwrap_or_else(|| panic!("must reject"));
+        assert!(matches!(err, AzdoError::Config(_)), "got {err:?}");
     }
 
     #[test]
     fn pat_debug_does_not_leak_value() {
-        let pat = Pat::new("super-secret-token-do-not-print".to_string());
+        let pat = Pat::new("super-secret-token-do-not-print".to_owned());
         let dbg = format!("{pat:?}");
-        assert!(!dbg.contains("super-secret-token"));
-        assert!(dbg.contains("redacted"));
+        assert!(
+            !dbg.contains("super-secret-token"),
+            "debug output leaked secret: {dbg}",
+        );
+        assert!(
+            dbg.contains("redacted"),
+            "debug missing redaction marker: {dbg}"
+        );
     }
 }
