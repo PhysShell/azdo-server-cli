@@ -1,0 +1,25 @@
+[package]
+name = "azdo"
+version = "0.1.0"
+edition = "2021"
+description = "CLI/TUI for Azure DevOps Server 2020 Update 1 (on-prem)"
+license = "WTFPL"
+readme = "README.md"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

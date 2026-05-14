@@ -1,0 +1,29 @@
+# azdo config — copy to:
+#   Windows: %APPDATA%\azdo\config.toml
+#   Linux:   $XDG_CONFIG_HOME/azdo/config.toml (or ~/.config/azdo/config.toml)
+#
+# PAT is NEVER stored here. Set the env var named in [auth].pat_env (default AZDO_PAT).
+
+server = "https://azdo.company.local/tfs"
+collection = "DefaultCollection"
+project = "Customs"
+api_version = "6.0"
+
+[auth]
+pat_env = "AZDO_PAT"
+
+[wiki]
+id = "TeamWiki"
+daily_path = "/Meetings/Daily"
+
+[states]
+test = "Ready for Test"
+active = "Active"
+closed = "Closed"
+
+[products.declaration]
+build_definition_id = 42
+test_state = "Ready for Test"
+
+[profiles.support]
+users = ["Ivan Petrov", "Maria Ivanova"]
