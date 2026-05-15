@@ -186,10 +186,14 @@ pub(crate) fn default_config_path() -> Option<PathBuf> {
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "tests legitimately panic on bad fixtures"
+    clippy::absolute_paths,
+    clippy::arithmetic_side_effects,
+    reason = "tests legitimately panic on bad fixtures; proptest macro emits absolute paths"
 )]
 mod tests {
-    use super::{AzdoError, Config, Pat};
+    use proptest::prelude::*;
+
+    use super::{AuthConfig, AzdoError, Config, Pat};
 
     const SAMPLE: &str = r#"
 server = "https://azdo.company.local/tfs"
@@ -293,5 +297,55 @@ project = "P"
             dbg.contains("redacted"),
             "debug missing redaction marker: {dbg}"
         );
+    }
+
+    fn cfg_with_server(server: String) -> Config {
+        Config {
+            server,
+            collection: "Col".to_owned(),
+            project: "Proj".to_owned(),
+            api_version: "6.0".to_owned(),
+            auth: AuthConfig {
+                pat_env: "AZDO_PAT".to_owned(),
+            },
+            wiki: None,
+            states: super::BTreeMap::new(),
+            products: super::BTreeMap::new(),
+            profiles: super::BTreeMap::new(),
+        }
+    }
+
+    proptest! {
+        /// With every other field valid, `validate()` accepts the config
+        /// **iff** `server` carries an http(s) scheme. This pins the exact
+        /// acceptance boundary against arbitrary inputs.
+        #[test]
+        fn validate_accepts_iff_http_scheme(
+            server in prop_oneof![".*", "https?://[a-zA-Z0-9./:_-]{0,24}"],
+        ) {
+            let expected_ok =
+                server.starts_with("http://") || server.starts_with("https://");
+            let got_ok = cfg_with_server(server.clone()).validate().is_ok();
+            prop_assert_eq!(
+                got_ok,
+                expected_ok,
+                "server {:?}: validate()={}, expected {}",
+                server,
+                got_ok,
+                expected_ok,
+            );
+        }
+
+        /// `Pat`'s `Debug` output is a fixed template that depends only on
+        /// the secret's length — never its content. Equality with the
+        /// length-only template is the precise non-leak contract (a
+        /// "does not contain" check would false-positive on short secrets
+        /// like "P" or secrets equal to "redacted").
+        #[test]
+        fn pat_debug_depends_only_on_length(secret in ".{0,64}") {
+            let rendered = format!("{:?}", Pat::new(secret.clone()));
+            let expected = format!("Pat(***redacted, len={})", secret.len());
+            prop_assert_eq!(rendered, expected);
+        }
     }
 }

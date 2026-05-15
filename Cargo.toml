@@ -134,5 +134,6 @@ print_stderr             = "allow"
 # We intentionally annotate every crate-internal item with `pub(crate)`
 # so visibility is explicit and `unreachable_pub` stays meaningful.
 redundant_pub_crate      = "allow"
-# `panic` is enabled below via the panic lint hook; in tests we want it.
-# (handled per-module with `#[allow(clippy::panic, ...)]` inside tests).
+
+[dev-dependencies]
+proptest = "1"
