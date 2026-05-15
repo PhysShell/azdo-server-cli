@@ -2,20 +2,22 @@
 name = "azdo"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.74"
 description = "CLI/TUI for Azure DevOps Server 2020 Update 1 (on-prem)"
 license = "WTFPL"
 readme = "README.md"
+repository = "https://github.com/physshell/azdo-server-cli"
+homepage = "https://github.com/physshell/azdo-server-cli"
+keywords = ["azure-devops", "tfs", "cli", "on-prem", "rest"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 toml = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-anyhow = "1"
 thiserror = "1"
-tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
 
@@ -23,3 +25,114 @@ base64 = "0.22"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Lint policy: deliberately strict.
+# Groups are denied wholesale, then a curated allow-list narrows things to
+# what fits a CLI of this shape. Anything not on the allow-list must be
+# fixed or annotated with a localised `#[allow(...)]` and a reason.
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+missing_copy_implementations = "warn"
+unreachable_pub = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+keyword_idents = { level = "warn", priority = -1 }
+let_underscore_drop = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+non_ascii_idents = "warn"
+single_use_lifetimes = "warn"
+variant_size_differences = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+future_incompatible = { level = "warn", priority = -1 }
+nonstandard_style = { level = "warn", priority = -1 }
+
+[lints.rustdoc]
+broken_intra_doc_links = "warn"
+private_intra_doc_links = "warn"
+invalid_codeblock_attributes = "warn"
+bare_urls = "warn"
+
+[lints.clippy]
+# Whole groups, denied. `priority = -1` lets specific lints below opt out.
+all          = { level = "deny",  priority = -1 }
+pedantic     = { level = "deny",  priority = -1 }
+nursery      = { level = "deny",  priority = -1 }
+cargo        = { level = "deny",  priority = -1 }
+complexity   = { level = "deny",  priority = -1 }
+perf         = { level = "deny",  priority = -1 }
+style        = { level = "deny",  priority = -1 }
+suspicious   = { level = "deny",  priority = -1 }
+correctness  = { level = "deny",  priority = -1 }
+
+# Curated restriction lints (this group is "opt-in only" by design).
+absolute_paths              = "warn"
+arithmetic_side_effects     = "warn"
+as_underscore               = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr            = "warn"
+create_dir                  = "warn"
+dbg_macro                   = "warn"
+empty_drop                  = "warn"
+empty_structs_with_brackets = "warn"
+exit                        = "warn"
+expect_used                 = "warn"
+filetype_is_file            = "warn"
+float_cmp_const             = "warn"
+fn_to_numeric_cast_any      = "warn"
+get_unwrap                  = "warn"
+if_then_some_else_none      = "warn"
+indexing_slicing            = "warn"
+let_underscore_must_use     = "warn"
+lossy_float_literal         = "warn"
+mem_forget                  = "warn"
+missing_assert_message      = "warn"
+mixed_read_write_in_expression = "warn"
+mod_module_files            = "warn"
+multiple_inherent_impl      = "warn"
+mutex_atomic                = "warn"
+panic                       = "warn"
+rc_buffer                   = "warn"
+rc_mutex                    = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method            = "warn"
+shadow_unrelated            = "warn"
+str_to_string               = "warn"
+string_add                  = "warn"
+string_slice                = "warn"
+suspicious_xor_used_as_pow  = "warn"
+todo                        = "warn"
+try_err                     = "warn"
+undocumented_unsafe_blocks  = "warn"
+unimplemented               = "warn"
+unnecessary_safety_doc      = "warn"
+unnecessary_self_imports    = "warn"
+unneeded_field_pattern      = "warn"
+unwrap_in_result            = "warn"
+unwrap_used                 = "warn"
+verbose_file_reads          = "warn"
+
+# Targeted opt-outs (with rationale):
+# `module_name_repetitions` — idiomatic Rust often uses the parent module
+# name in type names (e.g. `azdo::AzdoClient`); the lint is too noisy.
+module_name_repetitions  = "allow"
+# `multiple_crate_versions` — duplicates usually come from transitive deps
+# we don't control.
+multiple_crate_versions  = "allow"
+# `missing_errors_doc` / `missing_panics_doc` — overkill for an internal
+# binary crate; rustdoc link checking is enabled separately.
+missing_errors_doc       = "allow"
+missing_panics_doc       = "allow"
+must_use_candidate       = "allow"
+# CLI legitimately writes to stdout/stderr.
+print_stdout             = "allow"
+print_stderr             = "allow"
+# We intentionally annotate every crate-internal item with `pub(crate)`
+# so visibility is explicit and `unreachable_pub` stays meaningful.
+redundant_pub_crate      = "allow"
+# `panic` is enabled below via the panic lint hook; in tests we want it.
+# (handled per-module with `#[allow(clippy::panic, ...)]` inside tests).

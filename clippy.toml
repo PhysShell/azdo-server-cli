@@ -1,0 +1,38 @@
+# Complexity / size thresholds.
+# These tighten the defaults so we catch growth before it becomes a problem.
+
+# Cognitive complexity per function (default 25). Aim for "easy to read".
+cognitive-complexity-threshold = 15
+
+# clippy::too_many_arguments (default 7). Force splitting wide argument lists.
+too-many-arguments-threshold = 5
+
+# clippy::too_many_lines (default 100). Encourage short functions.
+too-many-lines-threshold = 80
+
+# clippy::type-complexity (default 250). Push complex types into aliases / newtypes.
+type-complexity-threshold = 150
+
+# Trigger `large_types_passed_by_value` / `large_stack_arrays` more eagerly.
+pass-by-value-size-limit = 192
+array-size-threshold = 16384
+
+# Documentation / naming.
+doc-valid-idents = [
+    "AzDO", "Azure", "DevOps", "REST", "HTTP", "HTTPS", "PAT", "TFS",
+    "JSON", "TOML", "YAML", "URL", "URI", "TUI", "CLI", "API", "ID",
+    "OS", "UUID", "GUID", "WIQL", "CommonMark",
+]
+
+# Treat anything starting with `unsafe_` as semver-safe restriction sites.
+# (kept default for now)
+
+# disallowed-methods: forbid foot-guns that are easy to write by accident.
+disallowed-methods = [
+    { path = "std::env::set_var", reason = "racy in multithreaded code; pass values explicitly" },
+    { path = "std::env::remove_var", reason = "racy in multithreaded code" },
+]
+
+disallowed-macros = [
+    { path = "std::dbg", reason = "use tracing::debug! instead" },
+]

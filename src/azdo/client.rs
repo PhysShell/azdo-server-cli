@@ -3,17 +3,18 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION};
-use reqwest::{Method, RequestBuilder};
+use reqwest::{Client, Method, RequestBuilder, Response};
 
 use crate::config::{Config, Pat};
 use crate::error::{AzdoError, AzdoResult};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const ERROR_BODY_LIMIT: usize = 500;
 
-#[derive(Clone)]
-pub struct AzdoClient {
-    http: reqwest::Client,
+#[derive(Debug, Clone)]
+pub(crate) struct AzdoClient {
+    http: Client,
     server: String,
     collection: String,
     project: String,
@@ -21,7 +22,7 @@ pub struct AzdoClient {
 }
 
 impl AzdoClient {
-    pub fn new(cfg: &Config, pat: &Pat) -> AzdoResult<Self> {
+    pub(crate) fn new(cfg: &Config, pat: &Pat) -> AzdoResult<Self> {
         let token = B64.encode(format!(":{}", pat.as_str()));
         let auth_value = format!("Basic {token}");
 
@@ -32,7 +33,7 @@ impl AzdoClient {
         );
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
 
-        let http = reqwest::Client::builder()
+        let http = Client::builder()
             .default_headers(headers)
             .user_agent(concat!("azdo/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(CONNECT_TIMEOUT)
@@ -41,54 +42,54 @@ impl AzdoClient {
 
         Ok(Self {
             http,
-            server: trim_slash(&cfg.server).to_string(),
-            collection: trim_slash(&cfg.collection).to_string(),
-            project: trim_slash(&cfg.project).to_string(),
+            server: trim_slash(&cfg.server).to_owned(),
+            collection: trim_slash(&cfg.collection).to_owned(),
+            project: trim_slash(&cfg.project).to_owned(),
             api_version: cfg.api_version.clone(),
         })
     }
 
-    pub fn collection_url(&self, path: &str) -> String {
+    pub(crate) fn collection_url(&self, path: &str) -> String {
         format!(
             "{}/{}{}",
             self.server,
             self.collection,
-            ensure_leading_slash(path)
+            ensure_leading_slash(path),
         )
     }
 
-    #[allow(dead_code)]
-    pub fn project_url(&self, path: &str) -> String {
+    #[allow(dead_code, reason = "used by later commands")]
+    pub(crate) fn project_url(&self, path: &str) -> String {
         format!(
             "{}/{}/{}{}",
             self.server,
             self.collection,
             self.project,
-            ensure_leading_slash(path)
+            ensure_leading_slash(path),
         )
     }
 
-    pub fn project_name(&self) -> &str {
+    pub(crate) fn project_name(&self) -> &str {
         &self.project
     }
 
-    #[allow(dead_code)]
-    pub fn api_version(&self) -> &str {
+    #[allow(dead_code, reason = "used by later commands")]
+    pub(crate) fn api_version(&self) -> &str {
         &self.api_version
     }
 
-    pub fn request(&self, method: Method, url: String) -> RequestBuilder {
+    pub(crate) fn request(&self, method: Method, url: String) -> RequestBuilder {
         self.http.request(method, url)
     }
 
-    pub async fn check_response(resp: reqwest::Response) -> AzdoResult<reqwest::Response> {
+    pub(crate) async fn check_response(resp: Response) -> AzdoResult<Response> {
         if resp.status().is_success() {
             return Ok(resp);
         }
         let status = resp.status().as_u16();
         let url = resp.url().to_string();
         let body = resp.text().await.unwrap_or_default();
-        let truncated = body.chars().take(500).collect::<String>();
+        let truncated: String = body.chars().take(ERROR_BODY_LIMIT).collect();
         Err(AzdoError::Http {
             status,
             url,
@@ -96,12 +97,12 @@ impl AzdoClient {
         })
     }
 
-    pub async fn ping(&self) -> AzdoResult<u16> {
+    pub(crate) async fn ping(&self) -> AzdoResult<u16> {
         let url = format!(
             "{}/_apis/projects/{}?api-version={}",
             self.collection_url(""),
             self.project,
-            self.api_version
+            self.api_version,
         );
         let resp = self.request(Method::GET, url).send().await?;
         let resp = Self::check_response(resp).await?;
@@ -117,15 +118,21 @@ fn ensure_leading_slash(s: &str) -> String {
     if s.is_empty() {
         String::new()
     } else if s.starts_with('/') {
-        s.to_string()
+        s.to_owned()
     } else {
         format!("/{s}")
     }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "tests legitimately panic on bad fixtures"
+)]
 mod tests {
-    use super::*;
+    use super::{AzdoClient, Config, Pat};
 
     fn cfg() -> Config {
         Config::from_str_for_tests(
@@ -135,33 +142,35 @@ collection = "DefaultCollection"
 project = "Customs"
 "#,
         )
-        .expect("must parse")
+        .unwrap_or_else(|e| panic!("must parse: {e}"))
+    }
+
+    fn client() -> AzdoClient {
+        AzdoClient::new(&cfg(), &Pat::new("x".into()))
+            .unwrap_or_else(|e| panic!("must build client: {e}"))
     }
 
     #[test]
     fn builds_collection_url() {
-        let c = AzdoClient::new(&cfg(), &Pat::new("x".into())).unwrap();
         assert_eq!(
-            c.collection_url("/_apis/projects"),
-            "https://azdo.company.local/tfs/DefaultCollection/_apis/projects"
+            client().collection_url("/_apis/projects"),
+            "https://azdo.company.local/tfs/DefaultCollection/_apis/projects",
         );
     }
 
     #[test]
     fn builds_project_url() {
-        let c = AzdoClient::new(&cfg(), &Pat::new("x".into())).unwrap();
         assert_eq!(
-            c.project_url("/_apis/wit/workitems/12345"),
-            "https://azdo.company.local/tfs/DefaultCollection/Customs/_apis/wit/workitems/12345"
+            client().project_url("/_apis/wit/workitems/12345"),
+            "https://azdo.company.local/tfs/DefaultCollection/Customs/_apis/wit/workitems/12345",
         );
     }
 
     #[test]
     fn url_normalizes_missing_leading_slash() {
-        let c = AzdoClient::new(&cfg(), &Pat::new("x".into())).unwrap();
         assert_eq!(
-            c.project_url("_apis/wit"),
-            "https://azdo.company.local/tfs/DefaultCollection/Customs/_apis/wit"
+            client().project_url("_apis/wit"),
+            "https://azdo.company.local/tfs/DefaultCollection/Customs/_apis/wit",
         );
     }
 }
