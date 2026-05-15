@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use tokio::runtime::Builder as RuntimeBuilder;
 use tracing_subscriber::EnvFilter;
 
+use crate::azdo::workitem;
 use crate::azdo::AzdoClient;
 use crate::config::Config;
 use crate::error::AzdoError;
@@ -41,6 +42,12 @@ struct Cli {
 enum Command {
     /// Verify connectivity and PAT by fetching configured project.
     Ping,
+
+    /// Show a work item as a readable plain-text block.
+    Task {
+        /// Numeric work item id.
+        id: u64,
+    },
 }
 
 fn main() -> ExitCode {
@@ -82,6 +89,7 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
 
     match cli.command {
         Command::Ping => cmd_ping(&client).await,
+        Command::Task { id } => cmd_task(&client, id).await,
     }
 }
 
@@ -104,5 +112,11 @@ async fn cmd_ping(client: &AzdoClient) -> Result<(), AzdoError> {
         status,
         client.project_name(),
     );
+    Ok(())
+}
+
+async fn cmd_task(client: &AzdoClient, id: u64) -> Result<(), AzdoError> {
+    let item = workitem::fetch(client, id).await?;
+    println!("{}", workitem::render(&item)?);
     Ok(())
 }

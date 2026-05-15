@@ -29,11 +29,16 @@ Legend: `[x]` shipped &middot; `[ ]` not yet &middot; `[~]` in progress
 
 ---
 
-### [ ] S1 — `azdo task <id>` (plain-text view)
+### [x] S1 — `azdo task <id>` (plain-text view)
 
 Read a work item via `GET /_apis/wit/workitems/{id}` and render it as a
 readable block in stdout: id, type, state, title, assignee, changed date,
-tags, description (HTML stripped via `html2text`).
+tags, description (HTML stripped via `html2text`). Missing optional fields
+are omitted; `System.AssignedTo` accepts both the modern identity object
+and a bare-string fallback.
+
+**Acceptance:** `AZDO_PAT=... azdo task 12345` prints the work item block;
+unknown ids surface as `HTTP 404` and exit code 4.
 
 ---
 

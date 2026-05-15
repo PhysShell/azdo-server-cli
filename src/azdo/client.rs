@@ -73,7 +73,6 @@ impl AzdoClient {
         &self.project
     }
 
-    #[allow(dead_code, reason = "used by later commands")]
     pub(crate) fn api_version(&self) -> &str {
         &self.api_version
     }

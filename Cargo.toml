@@ -20,6 +20,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 thiserror = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
+html2text = "0.15"
 
 [profile.release]
 lto = "thin"
@@ -137,3 +138,4 @@ redundant_pub_crate      = "allow"
 
 [dev-dependencies]
 proptest = "1"
+serde_json = "1"

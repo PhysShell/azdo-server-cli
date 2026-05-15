@@ -29,6 +29,9 @@ pub(crate) enum AzdoError {
 
     #[error("invalid header: {0}")]
     Header(String),
+
+    #[error("render error: {0}")]
+    Render(String),
 }
 
 /// Exit codes the CLI reports for each error category.
@@ -52,7 +55,7 @@ impl AzdoError {
                 _ => ExitCode::Generic,
             },
             Self::Transport(_) => ExitCode::Transport,
-            Self::Io(_) | Self::Toml(_) | Self::Header(_) => ExitCode::Generic,
+            Self::Io(_) | Self::Toml(_) | Self::Header(_) | Self::Render(_) => ExitCode::Generic,
         }
     }
 }

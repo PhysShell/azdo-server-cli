@@ -63,6 +63,23 @@ azdo ping
 # OK 200 (project "Customs" accessible)
 ```
 
+Show a work item as a readable plain-text block:
+
+```sh
+azdo task 12345
+# #12345  [Bug]  State: Active
+# Title:    Customs declaration form rejects valid TIN
+# Assignee: Ivan Petrov
+# Changed:  2026-05-14T10:23:00Z
+# Tags:     customs, urgent
+#
+# Description:
+# The form rejects a valid TIN.
+```
+
+The HTML description is flattened to terminal text; optional fields
+(assignee, changed date, tags) are omitted when the server returns none.
+
 Additional commands are added stage by stage; see [ROADMAP.md](ROADMAP.md) for
 what is already available.
 
