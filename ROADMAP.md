@@ -42,11 +42,16 @@ unknown ids surface as `HTTP 404` and exit code 4.
 
 ---
 
-### [ ] S2 — Comments (read)
+### [x] S2 — Comments (read)
 
 Add `--comments N` to `azdo task <id>`. Fetches
-`GET /_apis/wit/workItems/{id}/comments` (`api-version=6.0-preview.3`) and
-appends a chronologically ordered list under the work item.
+`GET /_apis/wit/workItems/{id}/comments` (`api-version=6.0-preview.3`,
+project-scoped, `$top=N`) and appends a chronologically ordered list
+(oldest first, ties broken by comment id) under the work item. Comment
+text is HTML-flattened; a missing author renders as `Unknown`.
+
+**Acceptance:** `AZDO_PAT=... azdo task 12345 --comments 5` prints the
+work item block followed by a `Comments (n):` section.
 
 ---
 

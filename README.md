@@ -80,6 +80,21 @@ azdo task 12345
 The HTML description is flattened to terminal text; optional fields
 (assignee, changed date, tags) are omitted when the server returns none.
 
+Append recent comments with `--comments N` (oldest first):
+
+```sh
+azdo task 12345 --comments 5
+# ...work item block...
+#
+# Comments (2):
+#
+# [2026-05-13T09:00:00Z] Ivan Petrov
+# First comment.
+#
+# [2026-05-14T11:30:00Z] Maria Ivanova
+# Second comment.
+```
+
 Additional commands are added stage by stage; see [ROADMAP.md](ROADMAP.md) for
 what is already available.
 

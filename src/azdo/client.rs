@@ -58,7 +58,6 @@ impl AzdoClient {
         )
     }
 
-    #[allow(dead_code, reason = "used by later commands")]
     pub(crate) fn project_url(&self, path: &str) -> String {
         format!(
             "{}/{}/{}{}",

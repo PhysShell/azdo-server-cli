@@ -54,6 +54,29 @@ impl Identity {
     }
 }
 
+/// `api-version` pinned for the work item comments preview endpoint.
+const COMMENTS_API_VERSION: &str = "6.0-preview.3";
+
+/// Envelope returned by `GET /_apis/wit/workItems/{id}/comments`.
+#[derive(Debug, Deserialize)]
+struct CommentsResponse {
+    #[serde(default)]
+    comments: Vec<Comment>,
+}
+
+/// A single work item comment.
+#[derive(Debug, Deserialize)]
+pub(crate) struct Comment {
+    #[serde(default)]
+    id: u64,
+    #[serde(default)]
+    text: String,
+    #[serde(rename = "createdBy")]
+    created_by: Option<Identity>,
+    #[serde(rename = "createdDate")]
+    created_date: Option<String>,
+}
+
 /// Fetch a single work item by numeric id.
 pub(crate) async fn fetch(client: &AzdoClient, id: u64) -> AzdoResult<WorkItem> {
     let url = format!(
@@ -64,6 +87,60 @@ pub(crate) async fn fetch(client: &AzdoClient, id: u64) -> AzdoResult<WorkItem> 
     let resp = client.request(Method::GET, url).send().await?;
     let resp = AzdoClient::check_response(resp).await?;
     Ok(resp.json::<WorkItem>().await?)
+}
+
+/// Fetch up to `top` comments for a work item, sorted chronologically
+/// (oldest first; ties broken by comment id).
+pub(crate) async fn fetch_comments(
+    client: &AzdoClient,
+    id: u64,
+    top: u32,
+) -> AzdoResult<Vec<Comment>> {
+    let url = format!(
+        "{}?api-version={COMMENTS_API_VERSION}&$top={top}",
+        client.project_url(&format!("/_apis/wit/workItems/{id}/comments")),
+    );
+    let resp = client.request(Method::GET, url).send().await?;
+    let resp = AzdoClient::check_response(resp).await?;
+    let mut comments = resp.json::<CommentsResponse>().await?.comments;
+    sort_chrono(&mut comments);
+    Ok(comments)
+}
+
+/// Order comments oldest-first; ties broken by comment id. ISO 8601
+/// timestamps sort chronologically as plain strings.
+fn sort_chrono(comments: &mut [Comment]) {
+    comments.sort_by(|a, b| a.created_date.cmp(&b.created_date).then(a.id.cmp(&b.id)));
+}
+
+/// Render a comments section (no trailing newline).
+pub(crate) fn render_comments(comments: &[Comment]) -> AzdoResult<String> {
+    if comments.is_empty() {
+        return Ok("Comments: (none)".to_owned());
+    }
+
+    let mut lines = vec![format!("Comments ({}):", comments.len())];
+    for c in comments {
+        let author = c
+            .created_by
+            .as_ref()
+            .map(Identity::name)
+            .filter(|n| !n.is_empty())
+            .unwrap_or("Unknown");
+        let header = match c.created_date.as_deref().map(str::trim) {
+            Some(date) if !date.is_empty() => format!("[{date}] {author}"),
+            _ => author.to_owned(),
+        };
+        let body = if c.text.trim().is_empty() {
+            "(empty)".to_owned()
+        } else {
+            html_to_text(&c.text)?
+        };
+        lines.push(String::new());
+        lines.push(header);
+        lines.push(body);
+    }
+    Ok(lines.join("\n"))
 }
 
 /// Render a work item as a readable plain-text block (no trailing newline).
@@ -136,9 +213,13 @@ fn html_to_text(html: &str) -> AzdoResult<String> {
     reason = "tests legitimately panic on bad fixtures"
 )]
 mod tests {
-    use super::{render, WorkItem};
+    use super::{render, render_comments, sort_chrono, CommentsResponse, WorkItem};
 
     fn parse(raw: &str) -> WorkItem {
+        serde_json::from_str(raw).unwrap_or_else(|e| panic!("fixture must parse: {e}"))
+    }
+
+    fn parse_comments(raw: &str) -> CommentsResponse {
         serde_json::from_str(raw).unwrap_or_else(|e| panic!("fixture must parse: {e}"))
     }
 
@@ -214,6 +295,64 @@ mod tests {
         assert!(
             out.contains("Assignee: Maria Ivanova"),
             "bare-string identity not handled: {out}",
+        );
+    }
+
+    // Deliberately out of chronological order to also exercise the sort.
+    const COMMENTS: &str = r#"
+{
+  "count": 2,
+  "comments": [
+    {
+      "id": 11,
+      "text": "<div>Second, posted later.</div>",
+      "createdBy": { "displayName": "Maria Ivanova" },
+      "createdDate": "2026-05-14T11:30:00Z"
+    },
+    {
+      "id": 10,
+      "text": "<div>First, posted earlier.</div>",
+      "createdBy": { "displayName": "Ivan Petrov" },
+      "createdDate": "2026-05-13T09:00:00Z"
+    }
+  ]
+}
+"#;
+
+    #[test]
+    fn renders_comments_sorted_chronologically() {
+        let mut list = parse_comments(COMMENTS).comments;
+        sort_chrono(&mut list);
+        let out = render_comments(&list).expect("render must succeed");
+        let expected = "Comments (2):\n\
+             \n\
+             [2026-05-13T09:00:00Z] Ivan Petrov\n\
+             First, posted earlier.\n\
+             \n\
+             [2026-05-14T11:30:00Z] Maria Ivanova\n\
+             Second, posted later.";
+        assert_eq!(out, expected, "comments section drifted from snapshot");
+    }
+
+    #[test]
+    fn empty_comments_render_none() {
+        let out = render_comments(&[]).expect("render must succeed");
+        assert_eq!(out, "Comments: (none)");
+    }
+
+    #[test]
+    fn comment_author_falls_back_when_missing() {
+        let raw = r#"
+{
+  "comments": [
+    { "id": 1, "text": "<div>orphan</div>", "createdDate": "2026-05-15T08:00:00Z" }
+  ]
+}
+"#;
+        let out = render_comments(&parse_comments(raw).comments).expect("render must succeed");
+        assert!(
+            out.contains("[2026-05-15T08:00:00Z] Unknown"),
+            "missing author not handled: {out}",
         );
     }
 }

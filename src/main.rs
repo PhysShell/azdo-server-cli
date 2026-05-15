@@ -47,6 +47,10 @@ enum Command {
     Task {
         /// Numeric work item id.
         id: u64,
+
+        /// Also append up to N comments (oldest first).
+        #[arg(long, value_name = "N")]
+        comments: Option<u32>,
     },
 }
 
@@ -89,7 +93,7 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
 
     match cli.command {
         Command::Ping => cmd_ping(&client).await,
-        Command::Task { id } => cmd_task(&client, id).await,
+        Command::Task { id, comments } => cmd_task(&client, id, comments).await,
     }
 }
 
@@ -115,8 +119,16 @@ async fn cmd_ping(client: &AzdoClient) -> Result<(), AzdoError> {
     Ok(())
 }
 
-async fn cmd_task(client: &AzdoClient, id: u64) -> Result<(), AzdoError> {
+async fn cmd_task(client: &AzdoClient, id: u64, comments: Option<u32>) -> Result<(), AzdoError> {
     let item = workitem::fetch(client, id).await?;
-    println!("{}", workitem::render(&item)?);
+    let mut out = workitem::render(&item)?;
+
+    if let Some(top) = comments.filter(|n| *n > 0) {
+        let list = workitem::fetch_comments(client, id, top).await?;
+        out.push_str("\n\n");
+        out.push_str(&workitem::render_comments(&list)?);
+    }
+
+    println!("{out}");
     Ok(())
 }
