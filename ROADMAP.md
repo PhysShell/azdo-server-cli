@@ -171,6 +171,42 @@ example config and a copy of this README.
 
 ---
 
+## Workflow engine — design locked
+
+The scripting/workflow feature (the eventual home of S10's composite,
+`--dry-run` aware flows) is built on the `Ops` seam in `src/ops.rs`:
+
+- `ReadOps` / `WriteOps` / `EscapeOps` split the surface by capability.
+  The split *is* the dry-run policy, expressed in types: reads/escape run
+  verbatim, writes are stubbed.
+- `DryRun` is generic only over `ReadOps + EscapeOps`, so it structurally
+  cannot forward a real mutation — the dry-run safety property is a
+  compile-time guarantee, not a convention.
+- The contract, the dry-run wrapper and a recording test backend ship now;
+  the network-backed `RealOps` is the body of S8/S9 (written against the
+  same trait, which finally makes those paths unit-testable).
+
+### Deferred decisions (recorded, not scheduled)
+
+- **Backend-agnostic vocabulary.** `Ops` is already the abstraction seam, so
+  another backend (GitHub/Jira/...) is "another impl". Do *not* genericise
+  the AzDO-shaped vocabulary on one implementation — revisit only when a
+  second backend is a concrete need (two reference points, not a guess).
+- **`cargo-mutants`**, scoped to the `Ops` impls and command layer (not the
+  whole tree): validates that the seam-level tests actually catch
+  regressions. Highest-ROI strictness add; next after `RealOps` exists.
+- **TLA+/Alloy** only if work-item transition rules ever move host-side as a
+  declarative table. Today they live in user scripts — nothing to specify.
+- **Rejected, with reason:** Kani (no `unsafe`/algorithmic surface — verifies
+  trivia at high cost); SMT deductive verification (brittle on I/O glue with
+  trait objects); OpenAPI codegen (huge, partly inaccurate, fights the
+  hand-curated minimal-verb design); making the script language
+  non-Turing-complete (does not buy the property — even Nix is Turing
+  complete; the real safeguard is the `Ops` capability boundary, already
+  present, plus engine op/time limits).
+
+---
+
 ## Cross-cutting requirements
 
 These apply to every stage and are checked at PR time:

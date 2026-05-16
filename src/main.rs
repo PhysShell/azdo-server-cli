@@ -2,6 +2,7 @@ mod azdo;
 mod browser;
 mod config;
 mod error;
+mod ops;
 mod tui;
 
 use std::collections::BTreeMap;
