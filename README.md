@@ -90,6 +90,16 @@ Hotkeys: `q`/`Esc` quit, `r` refresh, `c` comment, `o` open in browser,
 `Tab`/`Shift+Tab` switch pane, `j`/`k` (or arrows) scroll the active
 pane. The terminal is always restored on exit or panic.
 
+Open the work item in the system browser instead of rendering it
+(`xdg-open`, or `cmd /C start` on Windows; no network call):
+
+```sh
+azdo task 12345 --open
+```
+
+`--open` takes precedence over `--tui` and plain rendering; the same
+action is bound to `o` inside the TUI.
+
 Append recent comments with `--comments N` (oldest first):
 
 ```sh

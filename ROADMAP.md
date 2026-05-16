@@ -102,11 +102,21 @@ state surfaces the server's HTTP error.
 
 ---
 
-### [ ] S6 — `--open` (browser)
+### [x] S6 — `--open` (browser)
 
-Open the configured work item URL in the system browser
-(`{server}/{collection}/{project}/_workitems/edit/{id}`). Available as a CLI
-flag and as the `o` hotkey in the TUI.
+Opens the work item URL
+(`{server}/{collection}/{project}/_workitems/edit/{id}`, built by
+`AzdoClient::web_item_url`) in the system browser. The launch logic
+lives in a shared `browser` module (`xdg-open`, or `cmd /C start` on
+Windows; the child is reaped so there is no zombie). Used by the
+`azdo task <id> --open` flag (no network call; precedes `--tui`/plain)
+and the existing TUI `o` hotkey, which now delegates to the same code.
+A failed launch is a typed `AzdoError::Browser` (exit 1) on the CLI and
+a non-fatal status line in the TUI.
+
+**Acceptance:** `azdo task 12345 --open` launches the browser at the
+edit URL and prints `opening <url>`; `o` in `--tui` does the same
+without leaving the viewer.
 
 ---
 

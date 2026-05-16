@@ -35,6 +35,9 @@ pub(crate) enum AzdoError {
 
     #[error("input error: {0}")]
     Input(String),
+
+    #[error("cannot open browser: {0}")]
+    Browser(String),
 }
 
 /// Exit codes the CLI reports for each error category.
@@ -58,9 +61,12 @@ impl AzdoError {
                 _ => ExitCode::Generic,
             },
             Self::Transport(_) => ExitCode::Transport,
-            Self::Io(_) | Self::Toml(_) | Self::Header(_) | Self::Render(_) | Self::Input(_) => {
-                ExitCode::Generic
-            }
+            Self::Io(_)
+            | Self::Toml(_)
+            | Self::Header(_)
+            | Self::Render(_)
+            | Self::Input(_)
+            | Self::Browser(_) => ExitCode::Generic,
         }
     }
 }

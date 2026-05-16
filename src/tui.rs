@@ -6,7 +6,6 @@
 
 use std::io::{self, stdout, Stdout};
 use std::panic::{set_hook, take_hook};
-use std::process::Command;
 use std::time::Duration;
 
 use ratatui::backend::CrosstermBackend;
@@ -23,6 +22,7 @@ use ratatui::{Frame, Terminal};
 
 use crate::azdo::workitem::{self, Comment, WorkItem};
 use crate::azdo::AzdoClient;
+use crate::browser;
 use crate::error::AzdoResult;
 
 /// Comments fetched for the TUI (API caps `$top` at 200).
@@ -147,21 +147,11 @@ async fn load(client: &AzdoClient, id: u64) -> AzdoResult<App> {
     build_app(&item, &comments, client.web_item_url(id))
 }
 
-/// Open `url` in the system browser. Returns a status string; never fails
-/// the UI.
+/// Open `url` in the system browser, returning a status string. Never
+/// fails the UI.
 fn open_in_browser(url: &str) -> String {
-    let spawned = if cfg!(windows) {
-        Command::new("cmd").args(["/C", "start", "", url]).spawn()
-    } else {
-        Command::new("xdg-open").arg(url).spawn()
-    };
-    match spawned {
-        Ok(mut child) => {
-            // Reap promptly: `start` / `xdg-open` detach and exit at once,
-            // so this does not block the UI and avoids a zombie.
-            drop(child.wait());
-            format!("opened in browser: {url}")
-        }
+    match browser::open(url) {
+        Ok(()) => format!("opened in browser: {url}"),
         Err(e) => format!("could not open browser: {e}"),
     }
 }

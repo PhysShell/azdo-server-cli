@@ -177,6 +177,15 @@ project = "Customs"
     }
 
     #[test]
+    fn builds_web_item_url() {
+        assert_eq!(
+            client().web_item_url(777),
+            "https://azdo.company.local/tfs/DefaultCollection/Customs/_workitems/edit/777",
+            "browser URL must be {{server}}/{{collection}}/{{project}}/_workitems/edit/{{id}}",
+        );
+    }
+
+    #[test]
     fn url_normalizes_missing_leading_slash() {
         assert_eq!(
             client().project_url("_apis/wit"),

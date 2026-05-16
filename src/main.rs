@@ -1,4 +1,5 @@
 mod azdo;
+mod browser;
 mod config;
 mod error;
 mod tui;
@@ -58,6 +59,11 @@ enum Command {
         /// Open the interactive TUI viewer instead of plain text.
         #[arg(long)]
         tui: bool,
+
+        /// Open the work item in the system browser (takes precedence
+        /// over `--tui` and plain rendering; no network call).
+        #[arg(long)]
+        open: bool,
 
         #[command(subcommand)]
         action: Option<TaskAction>,
@@ -122,13 +128,14 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
             id,
             comments,
             tui,
+            open,
             action,
         } => match action {
             Some(TaskAction::Comment { text }) => cmd_comment(&client, id, &text).await,
             Some(TaskAction::SetState { name }) => {
                 cmd_set_state(&client, id, resolve_state(&name, &cfg.states)).await
             }
-            None => cmd_task(&client, id, comments, tui).await,
+            None => cmd_task(&client, id, comments, tui, open).await,
         },
     }
 }
@@ -160,7 +167,14 @@ async fn cmd_task(
     id: u64,
     comments: Option<u32>,
     tui: bool,
+    open: bool,
 ) -> Result<(), AzdoError> {
+    if open {
+        let url = client.web_item_url(id);
+        browser::open(&url)?;
+        println!("opening {url}");
+        return Ok(());
+    }
     if tui {
         return run_tui(client, id).await;
     }
