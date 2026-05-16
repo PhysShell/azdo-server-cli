@@ -87,11 +87,18 @@ confirmation; `echo body | azdo task 12345 comment -` posts stdin; in
 
 ---
 
-### [ ] S5 — `azdo task <id> set-state <name>`
+### [x] S5 — `azdo task <id> set-state <name>`
 
-`PATCH .../workitems/{id}` with `application/json-patch+json`. Accepts both
-literal state names and aliases from `[states]` in the config
-(e.g. `set-state test` → `Ready for Test`).
+`PATCH .../workitems/{id}` with a single-op `application/json-patch+json`
+document (`add /fields/System.State`). The Content-Type is set before
+`.json()` so reqwest keeps the patch media type. `name` is resolved
+through the `[states]` alias table, falling back to the literal name
+(e.g. `set-state test` → `Ready for Test`, `set-state Active` →
+`Active`). The server's stored state is echoed back on success.
+
+**Acceptance:** `azdo task 12345 set-state test` patches the item and
+prints `work item #12345 state set to "Ready for Test"`; an unknown
+state surfaces the server's HTTP error.
 
 ---
 

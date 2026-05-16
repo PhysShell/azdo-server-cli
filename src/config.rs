@@ -20,7 +20,6 @@ pub(crate) struct Config {
     #[allow(dead_code, reason = "wired up by later commands")]
     #[serde(default)]
     pub(crate) wiki: Option<WikiConfig>,
-    #[allow(dead_code, reason = "wired up by later commands")]
     #[serde(default)]
     pub(crate) states: BTreeMap<String, String>,
     #[allow(dead_code, reason = "wired up by later commands")]

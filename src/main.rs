@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod tui;
 
+use std::collections::BTreeMap;
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -70,6 +71,12 @@ enum TaskAction {
         /// Comment text, or `-` to read the whole body from stdin.
         text: String,
     },
+
+    /// Set the work item state (accepts `[states]` aliases from config).
+    SetState {
+        /// State name, or a `[states]` alias (e.g. `test`).
+        name: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -118,6 +125,9 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
             action,
         } => match action {
             Some(TaskAction::Comment { text }) => cmd_comment(&client, id, &text).await,
+            Some(TaskAction::SetState { name }) => {
+                cmd_set_state(&client, id, resolve_state(&name, &cfg.states)).await
+            }
             None => cmd_task(&client, id, comments, tui).await,
         },
     }
@@ -198,6 +208,18 @@ async fn cmd_comment(client: &AzdoClient, id: u64, text: &str) -> Result<(), Azd
     Ok(())
 }
 
+/// Map `name` through the `[states]` alias table, falling back to the
+/// literal name when it is not an alias.
+fn resolve_state<'a>(name: &'a str, states: &'a BTreeMap<String, String>) -> &'a str {
+    states.get(name).map_or(name, String::as_str)
+}
+
+async fn cmd_set_state(client: &AzdoClient, id: u64, state: &str) -> Result<(), AzdoError> {
+    let item = workitem::set_state(client, id, state).await?;
+    println!("work item #{id} state set to \"{}\"", item.state());
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(
     clippy::panic,
@@ -206,9 +228,10 @@ async fn cmd_comment(client: &AzdoClient, id: u64, text: &str) -> Result<(), Azd
     reason = "tests legitimately panic on bad fixtures"
 )]
 mod tests {
+    use std::collections::BTreeMap;
     use std::io::{self, Error, ErrorKind};
 
-    use super::{resolve_comment_body, AzdoError};
+    use super::{resolve_comment_body, resolve_state, AzdoError};
 
     fn never_called() -> io::Result<String> {
         panic!("stdin must not be read for a literal argument")
@@ -244,6 +267,28 @@ mod tests {
         assert!(
             matches!(err, AzdoError::Input(_)),
             "expected Input error, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn state_alias_resolves_else_passes_through() {
+        let mut states = BTreeMap::new();
+        drop(states.insert("test".to_owned(), "Ready for Test".to_owned()));
+
+        assert_eq!(
+            resolve_state("test", &states),
+            "Ready for Test",
+            "a configured alias maps to its full state name",
+        );
+        assert_eq!(
+            resolve_state("Active", &states),
+            "Active",
+            "a non-alias is treated as a literal state name",
+        );
+        assert_eq!(
+            resolve_state("anything", &BTreeMap::new()),
+            "anything",
+            "with no aliases every name passes through verbatim",
         );
     }
 

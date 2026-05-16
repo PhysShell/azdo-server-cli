@@ -117,6 +117,25 @@ A blank body is rejected rather than posted. In `--tui`, press `c`, type
 the comment, and `Enter` to post (the view re-fetches so it appears);
 `Esc` cancels.
 
+Change the work item state:
+
+```sh
+azdo task 12345 set-state "Ready for Test"
+azdo task 12345 set-state test          # via a [states] alias
+```
+
+`set-state` accepts a literal state name or an alias from the `[states]`
+table in the config, e.g.:
+
+```toml
+[states]
+test = "Ready for Test"
+active = "Active"
+```
+
+Anything not listed there is sent verbatim, so configuring aliases is
+optional. The server's stored state is printed back on success.
+
 Additional commands are added stage by stage; see [ROADMAP.md](ROADMAP.md) for
 what is already available.
 

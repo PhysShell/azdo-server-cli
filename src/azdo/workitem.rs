@@ -1,3 +1,4 @@
+use reqwest::header::{HeaderValue, CONTENT_TYPE};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +13,12 @@ const DESC_WIDTH: usize = 100;
 pub(crate) struct WorkItem {
     pub(crate) id: u64,
     pub(crate) fields: Fields,
+}
+
+impl WorkItem {
+    pub(crate) fn state(&self) -> &str {
+        &self.fields.state
+    }
 }
 
 /// The subset of `System.*` fields this stage renders.
@@ -128,6 +135,42 @@ pub(crate) async fn post_comment(client: &AzdoClient, id: u64, text: &str) -> Az
         .await?;
     let resp = AzdoClient::check_response(resp).await?;
     Ok(resp.json::<Comment>().await?)
+}
+
+/// JSON-Patch path for the work item state field.
+const STATE_PATH: &str = "/fields/System.State";
+
+/// One operation in an `application/json-patch+json` document.
+#[derive(Debug, Serialize)]
+struct JsonPatchOp {
+    op: String,
+    path: String,
+    value: String,
+}
+
+/// Set the work item state and return the server's updated copy.
+pub(crate) async fn set_state(client: &AzdoClient, id: u64, state: &str) -> AzdoResult<WorkItem> {
+    let url = format!(
+        "{}?api-version={}",
+        client.collection_url(&format!("/_apis/wit/workitems/{id}")),
+        client.api_version(),
+    );
+    let patch = [JsonPatchOp {
+        op: "add".to_owned(),
+        path: STATE_PATH.to_owned(),
+        value: state.to_owned(),
+    }];
+    let resp = client
+        .request(Method::PATCH, url)
+        .header(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/json-patch+json"),
+        )
+        .json(&patch)
+        .send()
+        .await?;
+    let resp = AzdoClient::check_response(resp).await?;
+    Ok(resp.json::<WorkItem>().await?)
 }
 
 /// Order comments oldest-first; ties broken by comment id. ISO 8601
@@ -255,7 +298,10 @@ fn html_to_text(html: &str) -> AzdoResult<String> {
     reason = "tests legitimately panic on bad fixtures"
 )]
 mod tests {
-    use super::{render, render_comments, sort_chrono, CommentCreate, CommentsResponse, WorkItem};
+    use super::{
+        render, render_comments, sort_chrono, CommentCreate, CommentsResponse, JsonPatchOp,
+        WorkItem,
+    };
 
     fn parse(raw: &str) -> WorkItem {
         serde_json::from_str(raw).unwrap_or_else(|e| panic!("fixture must parse: {e}"))
@@ -274,6 +320,20 @@ mod tests {
         assert_eq!(
             json, r#"{"text":"line one\n\"quoted\" & <tagged>"}"#,
             "POST body must be a single JSON-escaped `text` field",
+        );
+    }
+
+    #[test]
+    fn set_state_serializes_json_patch_document() {
+        let patch = [JsonPatchOp {
+            op: "add".to_owned(),
+            path: "/fields/System.State".to_owned(),
+            value: "Ready for Test".to_owned(),
+        }];
+        let json = serde_json::to_string(&patch).unwrap_or_else(|e| panic!("must serialize: {e}"));
+        assert_eq!(
+            json, r#"[{"op":"add","path":"/fields/System.State","value":"Ready for Test"}]"#,
+            "body must be a single-op application/json-patch+json array",
         );
     }
 
