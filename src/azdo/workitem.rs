@@ -19,6 +19,14 @@ impl WorkItem {
     pub(crate) fn state(&self) -> &str {
         &self.fields.state
     }
+
+    pub(crate) fn work_item_type(&self) -> &str {
+        &self.fields.work_item_type
+    }
+
+    pub(crate) fn title(&self) -> &str {
+        &self.fields.title
+    }
 }
 
 /// The subset of `System.*` fields this stage renders.

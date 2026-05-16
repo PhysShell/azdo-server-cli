@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand};
 use tokio::runtime::Builder as RuntimeBuilder;
 use tracing_subscriber::EnvFilter;
 
+use crate::azdo::query;
 use crate::azdo::workitem;
 use crate::azdo::AzdoClient;
 use crate::config::Config;
@@ -46,6 +47,13 @@ struct Cli {
 enum Command {
     /// Verify connectivity and PAT by fetching configured project.
     Ping,
+
+    /// List your open work items (assigned to you, not Closed/Done/Removed).
+    My {
+        /// Pick one interactively and open it in the TUI viewer.
+        #[arg(long)]
+        pick: bool,
+    },
 
     /// Show a work item as a readable plain-text block.
     Task {
@@ -124,6 +132,7 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
 
     match cli.command {
         Command::Ping => cmd_ping(&client).await,
+        Command::My { pick } => cmd_my(&client, pick).await,
         Command::Task {
             id,
             comments,
@@ -159,6 +168,19 @@ async fn cmd_ping(client: &AzdoClient) -> Result<(), AzdoError> {
         status,
         client.project_name(),
     );
+    Ok(())
+}
+
+async fn cmd_my(client: &AzdoClient, pick: bool) -> Result<(), AzdoError> {
+    let items = query::my_open_items(client).await?;
+    if pick {
+        if items.is_empty() {
+            println!("No open work items.");
+            return Ok(());
+        }
+        return tui::pick(client, items).await;
+    }
+    println!("{}", query::render_table(&items));
     Ok(())
 }
 

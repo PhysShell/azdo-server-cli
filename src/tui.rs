@@ -17,9 +17,10 @@ use ratatui::crossterm::terminal::{
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
+use crate::azdo::query;
 use crate::azdo::workitem::{self, Comment, WorkItem};
 use crate::azdo::AzdoClient;
 use crate::browser;
@@ -347,13 +348,96 @@ async fn event_loop(
     }
 }
 
+/// Load and run the item viewer on an already-initialised terminal.
+async fn view(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    client: &AzdoClient,
+    id: u64,
+) -> AzdoResult<()> {
+    let mut app = load(client, id).await?;
+    event_loop(terminal, client, id, &mut app).await
+}
+
 /// Run the interactive viewer for work item `id`.
 pub(crate) async fn run(client: &AzdoClient, id: u64) -> AzdoResult<()> {
-    let mut app = load(client, id).await?;
     install_panic_hook();
     let _guard = TerminalGuard;
     let mut terminal = init_terminal()?;
-    event_loop(&mut terminal, client, id, &mut app).await
+    view(&mut terminal, client, id).await
+}
+
+fn picker_ui(frame: &mut Frame<'_>, rows: &[String], selected: usize) {
+    let [list_a, footer_a] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
+
+    let list = List::new(rows.iter().map(String::as_str))
+        .block(
+            Block::new()
+                .borders(Borders::ALL)
+                .title(format!("My open work items ({})", rows.len())),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("> ");
+
+    let mut state = ListState::default();
+    state.select(Some(selected));
+    frame.render_stateful_widget(list, list_a, &mut state);
+    frame.render_widget(
+        Paragraph::new("j/k move   Enter open   q/Esc quit"),
+        footer_a,
+    );
+}
+
+/// Drive the picker; returns the chosen row index, or `None` if cancelled.
+fn pick_loop(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    rows: &[String],
+) -> AzdoResult<Option<usize>> {
+    let last = rows.len().saturating_sub(1);
+    let mut selected = 0_usize;
+    loop {
+        terminal.draw(|frame| picker_ui(frame, rows, selected))?;
+
+        if !event::poll(TICK)? {
+            continue;
+        }
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
+            KeyCode::Enter => return Ok(Some(selected)),
+            KeyCode::Char('j') | KeyCode::Down => {
+                selected = selected.saturating_add(1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => selected = selected.saturating_sub(1),
+            _ => {}
+        }
+    }
+}
+
+/// Show a picker over `items`; open the chosen one in the item viewer.
+pub(crate) async fn pick(client: &AzdoClient, items: Vec<WorkItem>) -> AzdoResult<()> {
+    let ids: Vec<u64> = items.iter().map(|it| it.id).collect();
+    let rows = query::rows(&items);
+
+    install_panic_hook();
+    let _guard = TerminalGuard;
+    let mut terminal = init_terminal()?;
+
+    if let Some(idx) = pick_loop(&mut terminal, &rows)? {
+        if let Some(id) = ids.get(idx).copied() {
+            view(&mut terminal, client, id).await?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -367,7 +451,8 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use super::{build_app, max_scroll, ui, App, Pane};
+    use super::{build_app, max_scroll, picker_ui, ui, App, Pane};
+    use crate::azdo::query;
     use crate::azdo::workitem::{Comment, WorkItem};
 
     const ITEM: &str = r#"
@@ -486,5 +571,58 @@ mod tests {
         app.input_cancel();
         assert!(app.input.is_none(), "Esc leaves input mode");
         assert_eq!(app.status, "comment cancelled");
+    }
+
+    #[test]
+    fn picker_renders_rows_title_and_footer() {
+        let batch = r#"
+{
+  "value": [
+    {
+      "id": 7,
+      "fields": {
+        "System.WorkItemType": "Bug",
+        "System.State": "Active",
+        "System.Title": "Customs form rejects valid TIN"
+      }
+    },
+    {
+      "id": 4242,
+      "fields": {
+        "System.WorkItemType": "Task",
+        "System.State": "New",
+        "System.Title": "Add upload retry"
+      }
+    }
+  ]
+}
+"#;
+        let root: serde_json::Value =
+            serde_json::from_str(batch).unwrap_or_else(|e| panic!("fixture: {e}"));
+        let value = root
+            .get("value")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let items: Vec<WorkItem> =
+            serde_json::from_value(value).unwrap_or_else(|e| panic!("fixture: {e}"));
+        let rows = query::rows(&items);
+
+        let mut term = Terminal::new(TestBackend::new(64, 12)).expect("test backend");
+        term.draw(|f| picker_ui(f, &rows, 0))
+            .expect("draw must succeed");
+        let rendered = format!("{}", term.backend());
+
+        for needle in [
+            "My open work items (2)",
+            "Customs form rejects valid TIN",
+            "Add upload retry",
+            "> ", // highlight symbol on the selected row
+            "Enter open",
+        ] {
+            assert!(
+                rendered.contains(needle),
+                "expected {needle:?} in picker frame:\n{rendered}",
+            );
+        }
     }
 }

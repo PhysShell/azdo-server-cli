@@ -63,6 +63,23 @@ azdo ping
 # OK 200 (project "Customs" accessible)
 ```
 
+List your open work items (assigned to you, not Closed/Done/Removed,
+most recently changed first):
+
+```sh
+azdo my
+# ID     Type  State   Title
+# 12345  Bug   Active  Customs declaration form rejects valid TIN
+# 67890  Task  New     Add retry to upload
+```
+
+Add `--pick` to choose one interactively (`j`/`k` to move, `Enter` to
+open it in the TUI viewer, `q`/`Esc` to quit):
+
+```sh
+azdo my --pick
+```
+
 Show a work item as a readable plain-text block:
 
 ```sh

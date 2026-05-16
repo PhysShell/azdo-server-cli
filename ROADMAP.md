@@ -120,11 +120,21 @@ without leaving the viewer.
 
 ---
 
-### [ ] S7 — `azdo my` (WIQL)
+### [x] S7 — `azdo my` (WIQL)
 
-List the current user's open work items via WIQL +
-`workitemsbatch`. Renders as a table; optional `--pick` opens the chosen
-item in the TUI.
+`POST /_apis/wit/wiql` (`@Me`, state not Closed/Done/Removed, newest
+change first) for the ids, then `POST /_apis/wit/workitemsbatch`
+(chunked at the 200-id cap, request order preserved) for the fields.
+Renders an aligned ID/Type/State/Title table reusing the `WorkItem`
+accessors. `--pick` runs an interactive ratatui list (`j`/`k` move,
+`Enter` open, `q`/`Esc` quit); the chosen item opens in the existing
+viewer within the same terminal session (the item event loop was
+factored into a `view` helper so the picker and `--tui` share one
+terminal setup/guard/panic hook).
+
+**Acceptance:** `azdo my` prints the table (or `No open work items.`);
+`azdo my --pick` lets you select one and drops into the work-item TUI,
+restoring the terminal on exit.
 
 ---
 
