@@ -72,10 +72,18 @@ before the default hook prints.
 
 ---
 
-### [ ] S4 — `azdo task <id> comment "..."`
+### [x] S4 — `azdo task <id> comment "..."`
 
-`POST .../comments`. Supports `comment -` to read the body from stdin. In the
-TUI: hotkey `c` opens a one-line prompt and refreshes after the POST.
+`POST .../comments` (`6.0-preview.3`, JSON `{"text": ...}`). `comment -`
+reads the whole body from stdin; surrounding whitespace is trimmed and an
+empty body is rejected (`AzdoError::Input`) so a blank comment is never
+sent. In the TUI: hotkey `c` opens a one-line prompt on the footer row
+(`Enter` posts then re-fetches so the new comment shows, `Esc` cancels);
+view hotkeys are suppressed while typing.
+
+**Acceptance:** `azdo task 12345 comment "looks good"` prints a
+confirmation; `echo body | azdo task 12345 comment -` posts stdin; in
+`--tui`, `c` then text then `Enter` adds the comment and refreshes.
 
 ---
 

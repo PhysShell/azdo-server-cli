@@ -32,6 +32,9 @@ pub(crate) enum AzdoError {
 
     #[error("render error: {0}")]
     Render(String),
+
+    #[error("input error: {0}")]
+    Input(String),
 }
 
 /// Exit codes the CLI reports for each error category.
@@ -55,7 +58,9 @@ impl AzdoError {
                 _ => ExitCode::Generic,
             },
             Self::Transport(_) => ExitCode::Transport,
-            Self::Io(_) | Self::Toml(_) | Self::Header(_) | Self::Render(_) => ExitCode::Generic,
+            Self::Io(_) | Self::Toml(_) | Self::Header(_) | Self::Render(_) | Self::Input(_) => {
+                ExitCode::Generic
+            }
         }
     }
 }

@@ -1,5 +1,5 @@
 use reqwest::Method;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::AzdoClient;
 use crate::error::{AzdoError, AzdoResult};
@@ -105,6 +105,29 @@ pub(crate) async fn fetch_comments(
     let mut comments = resp.json::<CommentsResponse>().await?.comments;
     sort_chrono(&mut comments);
     Ok(comments)
+}
+
+/// Request body for `POST .../comments`.
+#[derive(Debug, Serialize)]
+struct CommentCreate {
+    text: String,
+}
+
+/// Post a new comment and return the server's stored copy.
+pub(crate) async fn post_comment(client: &AzdoClient, id: u64, text: &str) -> AzdoResult<Comment> {
+    let url = format!(
+        "{}?api-version={COMMENTS_API_VERSION}",
+        client.project_url(&format!("/_apis/wit/workItems/{id}/comments")),
+    );
+    let resp = client
+        .request(Method::POST, url)
+        .json(&CommentCreate {
+            text: text.to_owned(),
+        })
+        .send()
+        .await?;
+    let resp = AzdoClient::check_response(resp).await?;
+    Ok(resp.json::<Comment>().await?)
 }
 
 /// Order comments oldest-first; ties broken by comment id. ISO 8601
@@ -232,7 +255,7 @@ fn html_to_text(html: &str) -> AzdoResult<String> {
     reason = "tests legitimately panic on bad fixtures"
 )]
 mod tests {
-    use super::{render, render_comments, sort_chrono, CommentsResponse, WorkItem};
+    use super::{render, render_comments, sort_chrono, CommentCreate, CommentsResponse, WorkItem};
 
     fn parse(raw: &str) -> WorkItem {
         serde_json::from_str(raw).unwrap_or_else(|e| panic!("fixture must parse: {e}"))
@@ -240,6 +263,18 @@ mod tests {
 
     fn parse_comments(raw: &str) -> CommentsResponse {
         serde_json::from_str(raw).unwrap_or_else(|e| panic!("fixture must parse: {e}"))
+    }
+
+    #[test]
+    fn comment_body_serializes_to_text_field() {
+        let json = serde_json::to_string(&CommentCreate {
+            text: "line one\n\"quoted\" & <tagged>".to_owned(),
+        })
+        .unwrap_or_else(|e| panic!("must serialize: {e}"));
+        assert_eq!(
+            json, r#"{"text":"line one\n\"quoted\" & <tagged>"}"#,
+            "POST body must be a single JSON-escaped `text` field",
+        );
     }
 
     const FULL: &str = r#"

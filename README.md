@@ -86,7 +86,7 @@ Open the interactive TUI viewer instead of plain text:
 azdo task 12345 --tui
 ```
 
-Hotkeys: `q`/`Esc` quit, `r` refresh, `o` open in browser,
+Hotkeys: `q`/`Esc` quit, `r` refresh, `c` comment, `o` open in browser,
 `Tab`/`Shift+Tab` switch pane, `j`/`k` (or arrows) scroll the active
 pane. The terminal is always restored on exit or panic.
 
@@ -104,6 +104,18 @@ azdo task 12345 --comments 5
 # [2026-05-14T11:30:00Z] Maria Ivanova
 # Second comment.
 ```
+
+Post a comment (the `comment` argument may be `-` to read the whole body
+from stdin):
+
+```sh
+azdo task 12345 comment "Reproduced on staging; raising priority."
+git log -1 --format=%B | azdo task 12345 comment -
+```
+
+A blank body is rejected rather than posted. In `--tui`, press `c`, type
+the comment, and `Enter` to post (the view re-fetches so it appears);
+`Esc` cancels.
 
 Additional commands are added stage by stage; see [ROADMAP.md](ROADMAP.md) for
 what is already available.

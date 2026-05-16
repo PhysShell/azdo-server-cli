@@ -3,7 +3,7 @@ mod config;
 mod error;
 mod tui;
 
-use std::io;
+use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -57,6 +57,18 @@ enum Command {
         /// Open the interactive TUI viewer instead of plain text.
         #[arg(long)]
         tui: bool,
+
+        #[command(subcommand)]
+        action: Option<TaskAction>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TaskAction {
+    /// Post a comment to the work item (`-` reads the body from stdin).
+    Comment {
+        /// Comment text, or `-` to read the whole body from stdin.
+        text: String,
     },
 }
 
@@ -99,7 +111,15 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
 
     match cli.command {
         Command::Ping => cmd_ping(&client).await,
-        Command::Task { id, comments, tui } => cmd_task(&client, id, comments, tui).await,
+        Command::Task {
+            id,
+            comments,
+            tui,
+            action,
+        } => match action {
+            Some(TaskAction::Comment { text }) => cmd_comment(&client, id, &text).await,
+            None => cmd_task(&client, id, comments, tui).await,
+        },
     }
 }
 
@@ -146,4 +166,94 @@ async fn cmd_task(
 
     println!("{out}");
     Ok(())
+}
+
+/// Resolve the comment body: `-` pulls from `read_stdin`, anything else is
+/// the literal argument. Surrounding whitespace is trimmed and an empty
+/// result is rejected so we never POST a blank comment.
+fn resolve_comment_body(
+    arg: &str,
+    read_stdin: impl FnOnce() -> io::Result<String>,
+) -> Result<String, AzdoError> {
+    let raw = if arg == "-" {
+        read_stdin()?
+    } else {
+        arg.to_owned()
+    };
+    let body = raw.trim();
+    if body.is_empty() {
+        return Err(AzdoError::Input("comment body is empty".to_owned()));
+    }
+    Ok(body.to_owned())
+}
+
+async fn cmd_comment(client: &AzdoClient, id: u64, text: &str) -> Result<(), AzdoError> {
+    let body = resolve_comment_body(text, || {
+        let mut buf = String::new();
+        io::stdin().read_to_string(&mut buf)?;
+        Ok(buf)
+    })?;
+    workitem::post_comment(client, id, &body).await?;
+    println!("comment posted on work item #{id}");
+    Ok(())
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "tests legitimately panic on bad fixtures"
+)]
+mod tests {
+    use std::io::{self, Error, ErrorKind};
+
+    use super::{resolve_comment_body, AzdoError};
+
+    fn never_called() -> io::Result<String> {
+        panic!("stdin must not be read for a literal argument")
+    }
+
+    #[test]
+    fn literal_argument_is_trimmed_and_kept() {
+        let body =
+            resolve_comment_body("  hello world  ", never_called).expect("literal must resolve");
+        assert_eq!(body, "hello world", "surrounding whitespace is trimmed");
+    }
+
+    #[test]
+    fn dash_reads_and_trims_stdin() {
+        let body = resolve_comment_body("-", || Ok("from stdin\n".to_owned()))
+            .expect("stdin must resolve");
+        assert_eq!(body, "from stdin", "trailing newline from stdin is trimmed");
+    }
+
+    #[test]
+    fn empty_literal_is_rejected() {
+        let err = resolve_comment_body("   ", never_called).expect_err("empty must fail");
+        assert!(
+            matches!(err, AzdoError::Input(_)),
+            "expected Input error, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn blank_stdin_is_rejected() {
+        let err = resolve_comment_body("-", || Ok("  \n\t ".to_owned()))
+            .expect_err("blank stdin must fail");
+        assert!(
+            matches!(err, AzdoError::Input(_)),
+            "expected Input error, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn stdin_read_error_propagates() {
+        let err = resolve_comment_body("-", || Err(Error::new(ErrorKind::BrokenPipe, "boom")))
+            .expect_err("io error must propagate");
+        assert!(
+            matches!(err, AzdoError::Io(_)),
+            "expected Io error, got {err:?}",
+        );
+    }
 }

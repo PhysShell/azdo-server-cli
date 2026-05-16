@@ -31,6 +31,9 @@ const TUI_COMMENTS_TOP: u32 = 200;
 /// Event poll interval; also the redraw cadence.
 const TICK: Duration = Duration::from_millis(100);
 
+/// Prefix shown on the comment-entry line.
+const PROMPT: &str = "comment> ";
+
 /// Which pane the scroll keys act on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pane {
@@ -53,6 +56,8 @@ struct App {
     desc_scroll: u16,
     comments_scroll: u16,
     status: String,
+    /// `Some` while the comment-entry line is active; holds the buffer.
+    input: Option<String>,
 }
 
 impl App {
@@ -75,6 +80,28 @@ impl App {
             Pane::Description => self.desc_scroll = self.desc_scroll.saturating_sub(1),
             Pane::Comments => self.comments_scroll = self.comments_scroll.saturating_sub(1),
         }
+    }
+
+    fn start_comment(&mut self) {
+        self.input = Some(String::new());
+        self.status = String::from("comment: type, Enter to send, Esc to cancel");
+    }
+
+    fn input_push(&mut self, ch: char) {
+        if let Some(buf) = self.input.as_mut() {
+            buf.push(ch);
+        }
+    }
+
+    fn input_backspace(&mut self) {
+        if let Some(buf) = self.input.as_mut() {
+            buf.pop();
+        }
+    }
+
+    fn input_cancel(&mut self) {
+        self.input = None;
+        self.status = String::from("comment cancelled");
     }
 }
 
@@ -110,6 +137,7 @@ fn build_app(item: &WorkItem, comments: &[Comment], url: String) -> AzdoResult<A
         desc_scroll: 0,
         comments_scroll: 0,
         status: String::from("ready"),
+        input: None,
     })
 }
 
@@ -196,13 +224,22 @@ fn ui(frame: &mut Frame<'_>, app: &App) {
         ),
         comments_a,
     );
-    frame.render_widget(
-        Paragraph::new(format!(
-            "q quit  r refresh  o open  Tab switch  j/k scroll  |  {}",
-            app.status,
-        )),
-        footer_a,
-    );
+    match app.input.as_deref() {
+        Some(buf) => {
+            frame.render_widget(Paragraph::new(format!("{PROMPT}{buf}")), footer_a);
+            let typed = u16::try_from(PROMPT.chars().count().saturating_add(buf.chars().count()))
+                .unwrap_or(u16::MAX);
+            let max_x = footer_a.x.saturating_add(footer_a.width.saturating_sub(1));
+            frame.set_cursor_position((footer_a.x.saturating_add(typed).min(max_x), footer_a.y));
+        }
+        None => frame.render_widget(
+            Paragraph::new(format!(
+                "q quit  r refresh  c comment  o open  Tab switch  j/k scroll  |  {}",
+                app.status,
+            )),
+            footer_a,
+        ),
+    }
 }
 
 /// Best-effort terminal restore (idempotent enough to run twice).
@@ -248,6 +285,24 @@ async fn refresh(client: &AzdoClient, id: u64, app: &mut App) {
     }
 }
 
+async fn submit_comment(client: &AzdoClient, id: u64, app: &mut App) {
+    let Some(raw) = app.input.take() else {
+        return;
+    };
+    let body = raw.trim();
+    if body.is_empty() {
+        app.status = String::from("empty comment, not sent");
+        return;
+    }
+    match workitem::post_comment(client, id, body).await {
+        Ok(_) => {
+            refresh(client, id, app).await;
+            app.status = String::from("comment posted");
+        }
+        Err(e) => app.status = format!("post failed: {e}"),
+    }
+}
+
 async fn event_loop(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     client: &AzdoClient,
@@ -279,14 +334,25 @@ async fn event_loop(
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-            KeyCode::Char('r') => refresh(client, id, app).await,
-            KeyCode::Char('o') => app.status = open_in_browser(&app.url),
-            KeyCode::Tab | KeyCode::BackTab => app.toggle_pane(),
-            KeyCode::Char('j') | KeyCode::Down => app.scroll_down(),
-            KeyCode::Char('k') | KeyCode::Up => app.scroll_up(),
-            _ => {}
+        if app.input.is_some() {
+            match key.code {
+                KeyCode::Esc => app.input_cancel(),
+                KeyCode::Enter => submit_comment(client, id, app).await,
+                KeyCode::Backspace => app.input_backspace(),
+                KeyCode::Char(ch) => app.input_push(ch),
+                _ => {}
+            }
+        } else {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                KeyCode::Char('c') => app.start_comment(),
+                KeyCode::Char('r') => refresh(client, id, app).await,
+                KeyCode::Char('o') => app.status = open_in_browser(&app.url),
+                KeyCode::Tab | KeyCode::BackTab => app.toggle_pane(),
+                KeyCode::Char('j') | KeyCode::Down => app.scroll_down(),
+                KeyCode::Char('k') | KeyCode::Up => app.scroll_up(),
+                _ => {}
+            }
         }
     }
 }
@@ -404,5 +470,31 @@ mod tests {
         assert_eq!(app.pane, Pane::Comments, "Tab switches pane");
         app.scroll_up();
         assert_eq!(app.comments_scroll, 0, "comments scroll saturates");
+    }
+
+    #[test]
+    fn comment_input_edits_renders_and_cancels() {
+        let mut app = fixture_app();
+        assert!(app.input.is_none(), "starts outside input mode");
+
+        app.start_comment();
+        assert_eq!(app.input.as_deref(), Some(""), "entry buffer opens empty");
+
+        app.input_push('h');
+        app.input_push('i');
+        app.input_backspace();
+        assert_eq!(app.input.as_deref(), Some("h"), "edits mutate the buffer");
+
+        let mut term = Terminal::new(TestBackend::new(40, 16)).expect("test backend");
+        term.draw(|f| ui(f, &app)).expect("draw must succeed");
+        let rendered = format!("{}", term.backend());
+        assert!(
+            rendered.contains("comment> h"),
+            "prompt + buffer must show on the footer line:\n{rendered}",
+        );
+
+        app.input_cancel();
+        assert!(app.input.is_none(), "Esc leaves input mode");
+        assert_eq!(app.status, "comment cancelled");
     }
 }
