@@ -55,12 +55,20 @@ work item block followed by a `Comments (n):` section.
 
 ---
 
-### [ ] S3 — TUI mode
+### [x] S3 — TUI mode
 
-Ratatui + crossterm interactive view: header, meta, scrollable description,
-scrollable comments. Hotkeys: `q` quit, `r` refresh, `o` open in browser,
-`Tab` switch panes, `j`/`k` scroll. Terminal state is always restored on
-exit/panic.
+Ratatui + crossterm interactive view, opened with `azdo task <id> --tui`
+(plain text stays the default). Layout: bordered header/meta block, a
+scrollable description pane and a scrollable comments pane, plus a
+footer hint/status line. Hotkeys: `q`/`Esc` quit, `r` refresh (re-fetch;
+failures surface in the status line, old data kept), `o` open in browser,
+`Tab`/`Shift+Tab` switch the active pane, `j`/`k` (and arrows) scroll.
+Terminal state is always restored: a `TerminalGuard` covers normal and
+`?`-propagation exits, and a chained panic hook restores the screen
+before the default hook prints.
+
+**Acceptance:** `AZDO_PAT=... azdo task 12345 --tui` opens the viewer;
+`q` exits with the terminal fully restored.
 
 ---
 

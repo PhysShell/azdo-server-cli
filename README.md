@@ -80,6 +80,16 @@ azdo task 12345
 The HTML description is flattened to terminal text; optional fields
 (assignee, changed date, tags) are omitted when the server returns none.
 
+Open the interactive TUI viewer instead of plain text:
+
+```sh
+azdo task 12345 --tui
+```
+
+Hotkeys: `q`/`Esc` quit, `r` refresh, `o` open in browser,
+`Tab`/`Shift+Tab` switch pane, `j`/`k` (or arrows) scroll the active
+pane. The terminal is always restored on exit or panic.
+
 Append recent comments with `--comments N` (oldest first):
 
 ```sh

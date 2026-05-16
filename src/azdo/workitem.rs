@@ -113,38 +113,9 @@ fn sort_chrono(comments: &mut [Comment]) {
     comments.sort_by(|a, b| a.created_date.cmp(&b.created_date).then(a.id.cmp(&b.id)));
 }
 
-/// Render a comments section (no trailing newline).
-pub(crate) fn render_comments(comments: &[Comment]) -> AzdoResult<String> {
-    if comments.is_empty() {
-        return Ok("Comments: (none)".to_owned());
-    }
-
-    let mut lines = vec![format!("Comments ({}):", comments.len())];
-    for c in comments {
-        let author = c
-            .created_by
-            .as_ref()
-            .map(Identity::name)
-            .filter(|n| !n.is_empty())
-            .unwrap_or("Unknown");
-        let header = match c.created_date.as_deref().map(str::trim) {
-            Some(date) if !date.is_empty() => format!("[{date}] {author}"),
-            _ => author.to_owned(),
-        };
-        let body = if c.text.trim().is_empty() {
-            "(empty)".to_owned()
-        } else {
-            html_to_text(&c.text)?
-        };
-        lines.push(String::new());
-        lines.push(header);
-        lines.push(body);
-    }
-    Ok(lines.join("\n"))
-}
-
-/// Render a work item as a readable plain-text block (no trailing newline).
-pub(crate) fn render(item: &WorkItem) -> AzdoResult<String> {
+/// Header + meta lines (`#id …`, `Title:`, `Assignee:`, optional
+/// `Changed:`/`Tags:`). Shared by the plain renderer and the TUI.
+pub(crate) fn summary_lines(item: &WorkItem) -> Vec<String> {
     let f = &item.fields;
 
     let assignee = f
@@ -178,13 +149,61 @@ pub(crate) fn render(item: &WorkItem) -> AzdoResult<String> {
         }
     }
 
+    lines
+}
+
+/// The work item description, HTML-flattened, or `(none)`.
+pub(crate) fn description_text(item: &WorkItem) -> AzdoResult<String> {
+    match item.fields.description.as_deref() {
+        Some(html) if !html.trim().is_empty() => html_to_text(html),
+        _ => Ok("(none)".to_owned()),
+    }
+}
+
+/// One comment's header line, e.g. `[2026-05-13T09:00:00Z] Ivan Petrov`.
+pub(crate) fn comment_header(c: &Comment) -> String {
+    let author = c
+        .created_by
+        .as_ref()
+        .map(Identity::name)
+        .filter(|n| !n.is_empty())
+        .unwrap_or("Unknown");
+    match c.created_date.as_deref().map(str::trim) {
+        Some(date) if !date.is_empty() => format!("[{date}] {author}"),
+        _ => author.to_owned(),
+    }
+}
+
+/// One comment's body, HTML-flattened, or `(empty)`.
+pub(crate) fn comment_body(c: &Comment) -> AzdoResult<String> {
+    if c.text.trim().is_empty() {
+        Ok("(empty)".to_owned())
+    } else {
+        html_to_text(&c.text)
+    }
+}
+
+/// Render a comments section (no trailing newline).
+pub(crate) fn render_comments(comments: &[Comment]) -> AzdoResult<String> {
+    if comments.is_empty() {
+        return Ok("Comments: (none)".to_owned());
+    }
+
+    let mut lines = vec![format!("Comments ({}):", comments.len())];
+    for c in comments {
+        lines.push(String::new());
+        lines.push(comment_header(c));
+        lines.push(comment_body(c)?);
+    }
+    Ok(lines.join("\n"))
+}
+
+/// Render a work item as a readable plain-text block (no trailing newline).
+pub(crate) fn render(item: &WorkItem) -> AzdoResult<String> {
+    let mut lines = summary_lines(item);
     lines.push(String::new());
     lines.push("Description:".to_owned());
-    lines.push(match f.description.as_deref() {
-        Some(html) if !html.trim().is_empty() => html_to_text(html)?,
-        _ => "(none)".to_owned(),
-    });
-
+    lines.push(description_text(item)?);
     Ok(lines.join("\n"))
 }
 

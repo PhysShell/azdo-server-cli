@@ -7,7 +7,17 @@ all-features = true
 [advisories]
 version = 2
 yanked = "warn"
-ignore = []
+# Transitive-only advisories we cannot act on (all reach us solely through
+# `ratatui`'s dependency tree) and which do not affect our usage:
+ignore = [
+    # `paste` is unmaintained (announcement only, no vulnerability).
+    # Pulled by ratatui via compact_str/strum; no drop-in upgrade exists.
+    "RUSTSEC-2024-0436",
+    # `lru` IterMut Stacked-Borrows unsoundness. Used internally by
+    # ratatui's buffer diff cache; we never touch `lru::IterMut`. Pinned
+    # by ratatui 0.29; no patched release on its 0.12 line.
+    "RUSTSEC-2026-0002",
+]
 
 [licenses]
 version = 2
@@ -21,6 +31,7 @@ allow = [
     "Unicode-3.0",
     "WTFPL",
     "CDLA-Permissive-2.0",  # webpki-roots
+    "Zlib",                 # foldhash (ratatui -> lru -> hashbrown); OSI-approved
 ]
 confidence-threshold = 0.8
 

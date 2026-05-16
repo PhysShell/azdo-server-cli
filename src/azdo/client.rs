@@ -72,6 +72,14 @@ impl AzdoClient {
         &self.project
     }
 
+    /// Browser URL for a work item's edit page.
+    pub(crate) fn web_item_url(&self, id: u64) -> String {
+        format!(
+            "{}/{}/{}/_workitems/edit/{id}",
+            self.server, self.collection, self.project,
+        )
+    }
+
     pub(crate) fn api_version(&self) -> &str {
         &self.api_version
     }

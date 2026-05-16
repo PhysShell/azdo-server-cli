@@ -1,6 +1,7 @@
 mod azdo;
 mod config;
 mod error;
+mod tui;
 
 use std::io;
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ use crate::azdo::workitem;
 use crate::azdo::AzdoClient;
 use crate::config::Config;
 use crate::error::AzdoError;
+use crate::tui::run as run_tui;
 
 #[derive(Parser, Debug)]
 #[command(name = "azdo", version, about = "CLI/TUI for Azure DevOps Server 2020")]
@@ -51,6 +53,10 @@ enum Command {
         /// Also append up to N comments (oldest first).
         #[arg(long, value_name = "N")]
         comments: Option<u32>,
+
+        /// Open the interactive TUI viewer instead of plain text.
+        #[arg(long)]
+        tui: bool,
     },
 }
 
@@ -93,7 +99,7 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
 
     match cli.command {
         Command::Ping => cmd_ping(&client).await,
-        Command::Task { id, comments } => cmd_task(&client, id, comments).await,
+        Command::Task { id, comments, tui } => cmd_task(&client, id, comments, tui).await,
     }
 }
 
@@ -119,7 +125,16 @@ async fn cmd_ping(client: &AzdoClient) -> Result<(), AzdoError> {
     Ok(())
 }
 
-async fn cmd_task(client: &AzdoClient, id: u64, comments: Option<u32>) -> Result<(), AzdoError> {
+async fn cmd_task(
+    client: &AzdoClient,
+    id: u64,
+    comments: Option<u32>,
+    tui: bool,
+) -> Result<(), AzdoError> {
+    if tui {
+        return run_tui(client, id).await;
+    }
+
     let item = workitem::fetch(client, id).await?;
     let mut out = workitem::render(&item)?;
 
