@@ -23,7 +23,7 @@ use std::rc::Rc;
 use rhai::{Dynamic, Engine, EvalAltResult, Map, Position, Scope};
 use tokio::runtime::{Builder, Runtime};
 
-use crate::azdo::{build, workitem, AzdoClient};
+use crate::azdo::{build, wiki, workitem, AzdoClient};
 use crate::config::Config;
 use crate::error::AzdoError;
 use crate::ops::{
@@ -39,6 +39,7 @@ const UNWIRED: &str = "not wired in the S8 + Rhai spike stage";
 pub(crate) struct RealOps {
     client: AzdoClient,
     builds: BTreeMap<String, u32>,
+    wiki_id: Option<String>,
     rt: Runtime,
 }
 
@@ -49,12 +50,22 @@ impl RealOps {
             .iter()
             .filter_map(|(name, p)| p.build_definition_id.map(|id| (name.clone(), id)))
             .collect();
+        let wiki_id = cfg.wiki.as_ref().map(|w| w.id.clone());
         let rt = Builder::new_current_thread().enable_all().build()?;
         Ok(Self {
             client: client.clone(),
             builds,
+            wiki_id,
             rt,
         })
+    }
+
+    /// The configured wiki identifier, or a typed error naming the missing
+    /// `[wiki]` config section so a script fails honestly off-surface.
+    fn wiki_id(&self) -> Result<&str, OpsError> {
+        self.wiki_id
+            .as_deref()
+            .ok_or_else(|| OpsError::Io("no `[wiki]` section in config".to_owned()))
     }
 }
 
@@ -88,8 +99,17 @@ impl ReadOps for RealOps {
     fn my_open(&self) -> Result<Vec<Task>, OpsError> {
         Err(OpsError::Io(format!("my_open: {UNWIRED}")))
     }
-    fn wiki_get(&self, _path: &str) -> Result<String, OpsError> {
-        Err(OpsError::Io(format!("wiki_get: {UNWIRED}")))
+    fn wiki_get(&self, path: &str) -> Result<String, OpsError> {
+        let id = self.wiki_id()?;
+        self.rt
+            .block_on(wiki::get_page(&self.client, id, path))
+            .map_err(to_ops_err)
+    }
+    fn wiki_list(&self, root: &str) -> Result<Vec<String>, OpsError> {
+        let id = self.wiki_id()?;
+        self.rt
+            .block_on(wiki::list_pages(&self.client, id, root))
+            .map_err(to_ops_err)
     }
     fn print(&self, msg: &str) {
         println!("{msg}");
@@ -138,8 +158,11 @@ impl WriteOps for RealOps {
                 .project_url(&format!("/_build/results?buildId={}", b.id)),
         })
     }
-    fn wiki_put(&self, _path: &str, _content: &str) -> Result<(), OpsError> {
-        Err(OpsError::Io(format!("wiki_put: {UNWIRED}")))
+    fn wiki_put(&self, path: &str, content: &str) -> Result<(), OpsError> {
+        let id = self.wiki_id()?;
+        self.rt
+            .block_on(wiki::put_page(&self.client, id, path, content))
+            .map_err(to_ops_err)
     }
 }
 
@@ -334,6 +357,9 @@ mod tests {
             Err(OpsError::Io("x".to_owned()))
         }
         fn wiki_get(&self, _p: &str) -> Result<String, OpsError> {
+            Err(OpsError::Io("x".to_owned()))
+        }
+        fn wiki_list(&self, _r: &str) -> Result<Vec<String>, OpsError> {
             Err(OpsError::Io("x".to_owned()))
         }
         fn print(&self, msg: &str) {

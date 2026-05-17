@@ -136,6 +136,10 @@ pub(crate) trait ReadOps {
     fn my_open(&self) -> Result<Vec<Task>, OpsError>;
     /// Read a wiki page's content by path.
     fn wiki_get(&self, path: &str) -> Result<String, OpsError>;
+    /// Every descendant page path under `root` (recursive). Order is not
+    /// guaranteed; "which is latest" is a caller concern (see
+    /// [`crate::daily::pick_latest`]).
+    fn wiki_list(&self, root: &str) -> Result<Vec<String>, OpsError>;
 
     /// Print a line to the user.
     fn print(&self, msg: &str);
@@ -231,6 +235,9 @@ impl<R: ReadOps + EscapeOps> ReadOps for DryRun<R> {
     }
     fn wiki_get(&self, path: &str) -> Result<String, OpsError> {
         self.inner.wiki_get(path)
+    }
+    fn wiki_list(&self, root: &str) -> Result<Vec<String>, OpsError> {
+        self.inner.wiki_list(root)
     }
     fn print(&self, msg: &str) {
         self.inner.print(msg);
@@ -340,6 +347,10 @@ mod tests {
             self.log(&format!("wiki_get {path}"));
             Ok(String::new())
         }
+        fn wiki_list(&self, root: &str) -> Result<Vec<String>, super::OpsError> {
+            self.log(&format!("wiki_list {root}"));
+            Ok(vec![])
+        }
         fn print(&self, msg: &str) {
             self.log(&format!("print {msg}"));
         }
@@ -421,6 +432,7 @@ mod tests {
         let dry = super::DryRun::new(Recording::default());
         dry.task(WorkItemId(7)).expect("read ok");
         drop(dry.my_open().expect("read ok"));
+        drop(dry.wiki_list("R").expect("read ok"));
         drop(
             dry.http(HttpReq {
                 method: "GET".to_owned(),
@@ -435,6 +447,7 @@ mod tests {
             vec![
                 "task 7".to_owned(),
                 "my_open".to_owned(),
+                "wiki_list R".to_owned(),
                 "http GET svc".to_owned(),
             ],
             "reads and escape reach the backend unchanged",
