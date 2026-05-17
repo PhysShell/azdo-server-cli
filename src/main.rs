@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 use tokio::runtime::Builder as RuntimeBuilder;
 use tracing_subscriber::EnvFilter;
 
+use crate::azdo::build;
 use crate::azdo::query;
 use crate::azdo::workitem;
 use crate::azdo::AzdoClient;
@@ -77,6 +78,12 @@ enum Command {
         #[command(subcommand)]
         action: Option<TaskAction>,
     },
+
+    /// Queue a build for a configured product.
+    Build {
+        #[command(subcommand)]
+        action: BuildAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -91,6 +98,27 @@ enum TaskAction {
     SetState {
         /// State name, or a `[states]` alias (e.g. `test`).
         name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BuildAction {
+    /// Queue a build for `[products.<product>]` and optionally wait for it.
+    Start {
+        /// Product key from `[products.<name>]` in the config.
+        product: String,
+
+        /// Pass `WorkItemId=<id>` to the build.
+        #[arg(long = "work-item", value_name = "ID")]
+        work_item: Option<u64>,
+
+        /// Extra build parameter as `key=value` (repeatable).
+        #[arg(long = "param", value_name = "K=V")]
+        params: Vec<String>,
+
+        /// Block until the build reaches a terminal state.
+        #[arg(long)]
+        wait: bool,
     },
 }
 
@@ -146,6 +174,26 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
                 cmd_set_state(&client, id, resolve_state(&name, &cfg.states)).await
             }
             None => cmd_task(&client, id, comments, tui, open).await,
+        },
+        Command::Build { action } => match action {
+            BuildAction::Start {
+                product,
+                work_item,
+                params,
+                wait,
+            } => {
+                cmd_build_start(
+                    &client,
+                    &cfg,
+                    &product,
+                    BuildStartOpts {
+                        work_item,
+                        params,
+                        wait,
+                    },
+                )
+                .await
+            }
         },
     }
 }
@@ -257,6 +305,71 @@ async fn cmd_set_state(client: &AzdoClient, id: u64, state: &str) -> Result<(), 
     Ok(())
 }
 
+#[derive(Debug)]
+struct BuildStartOpts {
+    work_item: Option<u64>,
+    params: Vec<String>,
+    wait: bool,
+}
+
+/// Assemble the Azure DevOps `parameters` value (itself a JSON-encoded
+/// object) from `--work-item` and repeated `--param key=value`. Returns
+/// `None` when there is nothing to send. Keys must be non-empty and each
+/// `--param` must contain a `=`.
+fn build_parameters(
+    work_item: Option<u64>,
+    params: &[String],
+) -> Result<Option<String>, AzdoError> {
+    let mut map: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(id) = work_item {
+        drop(map.insert("WorkItemId".to_owned(), id.to_string()));
+    }
+    for kv in params {
+        let (k, v) = kv
+            .split_once('=')
+            .ok_or_else(|| AzdoError::Input(format!("--param must be key=value, got `{kv}`")))?;
+        if k.is_empty() {
+            return Err(AzdoError::Input(format!(
+                "--param has an empty key: `{kv}`"
+            )));
+        }
+        drop(map.insert(k.to_owned(), v.to_owned()));
+    }
+    if map.is_empty() {
+        return Ok(None);
+    }
+    serde_json::to_string(&map)
+        .map(Some)
+        .map_err(|e| AzdoError::Render(e.to_string()))
+}
+
+async fn cmd_build_start(
+    client: &AzdoClient,
+    cfg: &Config,
+    product: &str,
+    opts: BuildStartOpts,
+) -> Result<(), AzdoError> {
+    let def_id = cfg
+        .products
+        .get(product)
+        .and_then(|p| p.build_definition_id)
+        .ok_or_else(|| {
+            AzdoError::Config(format!(
+                "no `build_definition_id` for product `{product}` (expected [products.{product}])"
+            ))
+        })?;
+    let parameters = build_parameters(opts.work_item, &opts.params)?;
+    let queued = build::queue_build(client, def_id, parameters).await?;
+    println!("queued build #{} (definition {def_id})", queued.id);
+    if opts.wait {
+        let done = build::wait_build(client, queued.id).await?;
+        let result = done.result.as_deref().unwrap_or("(no result)");
+        let number = done.number.as_deref().unwrap_or("-");
+        println!("build #{} {result} [{number}]", done.id);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(
     clippy::panic,
@@ -268,7 +381,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::io::{self, Error, ErrorKind};
 
-    use super::{resolve_comment_body, resolve_state, AzdoError};
+    use super::{build_parameters, resolve_comment_body, resolve_state, AzdoError};
 
     fn never_called() -> io::Result<String> {
         panic!("stdin must not be read for a literal argument")
@@ -336,6 +449,39 @@ mod tests {
         assert!(
             matches!(err, AzdoError::Io(_)),
             "expected Io error, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn build_parameters_emits_sorted_json_object() {
+        let out = build_parameters(Some(12345), &["b=2".to_owned(), "a=1".to_owned()])
+            .expect("valid params")
+            .expect("non-empty -> Some");
+        assert_eq!(
+            out, r#"{"WorkItemId":"12345","a":"1","b":"2"}"#,
+            "parameters must be a JSON object with deterministically sorted keys",
+        );
+    }
+
+    #[test]
+    fn build_parameters_is_none_when_empty() {
+        let out = build_parameters(None, &[]).expect("no params is valid");
+        assert!(out.is_none(), "nothing to send must be None, got {out:?}");
+    }
+
+    #[test]
+    fn build_parameters_rejects_missing_equals_and_empty_key() {
+        let no_eq = build_parameters(None, &["novalue".to_owned()])
+            .expect_err("a param without `=` must fail");
+        assert!(
+            matches!(no_eq, AzdoError::Input(_)),
+            "expected Input error, got {no_eq:?}",
+        );
+        let empty_key =
+            build_parameters(None, &["=v".to_owned()]).expect_err("an empty key must fail");
+        assert!(
+            matches!(empty_key, AzdoError::Input(_)),
+            "expected Input error, got {empty_key:?}",
         );
     }
 }

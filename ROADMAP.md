@@ -138,11 +138,24 @@ restoring the terminal on exit.
 
 ---
 
-### [ ] S8 — `azdo build start`
+### [x] S8 — `azdo build start`
 
-Queue a build via `POST /_apis/build/builds` with parameter passthrough
-(`{ "WorkItemId": "12345" }`). Resolves build definition ID through
-`[products.<name>]`. `--wait` polls until the build reaches a terminal state.
+`azdo build start <product>` queues a build via
+`POST /_apis/build/builds`. The build definition id is resolved from
+`[products.<product>].build_definition_id` (a missing entry is a typed
+`Config` error). `--work-item <id>` and repeated `--param key=value` are
+folded into the Azure DevOps `parameters` string (a JSON-encoded object
+with deterministically sorted keys; an empty key or a `--param` without
+`=` is a typed `Input` error). `--wait` polls
+`GET /_apis/build/builds/{id}` every 5s until `status == "completed"`
+and prints the result and build number. Queue/report only — mapping a
+failed build to a non-zero exit is deliberately left to the workflow
+engine, not the raw command.
+
+**Acceptance:** with `[products.declaration] build_definition_id = 42`,
+`azdo build start declaration --work-item 12345` prints
+`queued build #<n> (definition 42)`; adding `--wait` blocks and then
+prints `build #<n> succeeded [<number>]`.
 
 ---
 
