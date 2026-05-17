@@ -192,6 +192,13 @@ pub(crate) trait EscapeOps {
     fn sh(&self, cmd: &str, args: &[String]) -> Result<ShOut, OpsError>;
 }
 
+/// The full backend surface a workflow engine holds. The blanket impl makes
+/// every `ReadOps + WriteOps + EscapeOps` value an `Ops` — including
+/// `DryRun<RealOps>` — so the engine can keep a single `dyn Ops` and stay
+/// agnostic to whether it is previewing or executing.
+pub(crate) trait Ops: ReadOps + WriteOps + EscapeOps {}
+impl<T: ReadOps + WriteOps + EscapeOps> Ops for T {}
+
 /// `--dry-run` wrapper.
 ///
 /// Parameterised over `ReadOps + EscapeOps` *only* — never [`WriteOps`].

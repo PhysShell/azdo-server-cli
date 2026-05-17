@@ -199,6 +199,23 @@ The scripting/workflow feature (the eventual home of S10's composite,
   the network-backed `RealOps` is the body of S8/S9 (written against the
   same trait, which finally makes those paths unit-testable).
 
+**Rhai spike landed (`azdo run <file.rhai>`).** A deliberately tiny
+scripting surface — `task`, `build_start`, `print`, `fail`, `stop`, the
+`DRY_RUN` constant — over the `Ops` seam, exercised against the real S8
+backend to validate the surface *before* it is frozen. `RealOps` is real
+for the spike surface and returns a typed "not wired" error elsewhere
+(honest, not a stub success). Sync by design: `Ops` is synchronous
+(Rhai is too); `RealOps` owns a dedicated runtime and `block_on`s per
+call, and `azdo run` is dispatched outside the shared async runtime so
+those `block_on`s are never nested. Deliberately **out** of the spike:
+workflow discovery / `--list`, a full stdlib, op/time limits, the
+remaining `Ops` methods, and any in-process concurrency (two workflows
+at once = two processes, the OS already gives that). `rhai` adds
+`smartstring` (MPL-2.0, file-level copyleft, unmodified upstream — no
+obligation on our code) and `tiny-keccak` (CC0-1.0); both are narrow
+per-crate `deny.toml` exceptions, the global allow-list stays
+permissive-only. The engine proper, discovery, and limits are S10/S11.
+
 ### Deferred decisions (recorded, not scheduled)
 
 - **Backend-agnostic vocabulary.** `Ops` is already the abstraction seam, so

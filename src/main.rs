@@ -4,6 +4,7 @@ mod config;
 mod error;
 mod ops;
 mod tui;
+mod workflow;
 
 use std::collections::BTreeMap;
 use std::io::{self, Read};
@@ -84,6 +85,17 @@ enum Command {
         #[command(subcommand)]
         action: BuildAction,
     },
+
+    /// Run a workflow script (Rhai spike: minimal host surface).
+    Run {
+        /// Path to the `.rhai` workflow file.
+        file: PathBuf,
+
+        /// Preview: reads and the escape hatch run for real, every AzDO
+        /// mutation is stubbed.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -134,16 +146,8 @@ fn main() -> ExitCode {
 
     let cli = Cli::parse();
 
-    let runtime = match RuntimeBuilder::new_current_thread().enable_all().build() {
-        Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("error: cannot init tokio runtime: {e}");
-            return ExitCode::from(1);
-        }
-    };
-
-    match runtime.block_on(run(cli)) {
-        Ok(()) => ExitCode::SUCCESS,
+    match dispatch(cli) {
+        Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::from(e.exit_code() as u8)
@@ -151,7 +155,11 @@ fn main() -> ExitCode {
     }
 }
 
-async fn run(cli: Cli) -> Result<(), AzdoError> {
+/// Sync setup, then either run the workflow spike synchronously (it owns its
+/// own runtime — see `workflow`) or drive a network command on a shared
+/// current-thread runtime. The two paths are kept separate so a per-op
+/// `block_on` inside `RealOps` is never nested in an outer `block_on`.
+fn dispatch(cli: Cli) -> Result<ExitCode, AzdoError> {
     let mut cfg = Config::load(cli.config.as_deref())?;
     apply_overrides(&mut cfg, &cli);
     cfg.validate()?;
@@ -160,8 +168,21 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
     let client = AzdoClient::new(&cfg, &pat)?;
 
     match cli.command {
-        Command::Ping => cmd_ping(&client).await,
-        Command::My { pick } => cmd_my(&client, pick).await,
+        Command::Run { file, dry_run } => Ok(ExitCode::from(workflow::run_file(
+            &client, &cfg, &file, dry_run,
+        )?)),
+        command => {
+            let runtime = RuntimeBuilder::new_current_thread().enable_all().build()?;
+            runtime.block_on(run_net(&client, &cfg, command))?;
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+async fn run_net(client: &AzdoClient, cfg: &Config, command: Command) -> Result<(), AzdoError> {
+    match command {
+        Command::Ping => cmd_ping(client).await,
+        Command::My { pick } => cmd_my(client, pick).await,
         Command::Task {
             id,
             comments,
@@ -169,11 +190,11 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
             open,
             action,
         } => match action {
-            Some(TaskAction::Comment { text }) => cmd_comment(&client, id, &text).await,
+            Some(TaskAction::Comment { text }) => cmd_comment(client, id, &text).await,
             Some(TaskAction::SetState { name }) => {
-                cmd_set_state(&client, id, resolve_state(&name, &cfg.states)).await
+                cmd_set_state(client, id, resolve_state(&name, &cfg.states)).await
             }
-            None => cmd_task(&client, id, comments, tui, open).await,
+            None => cmd_task(client, id, comments, tui, open).await,
         },
         Command::Build { action } => match action {
             BuildAction::Start {
@@ -183,8 +204,8 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
                 wait,
             } => {
                 cmd_build_start(
-                    &client,
-                    &cfg,
+                    client,
+                    cfg,
                     &product,
                     BuildStartOpts {
                         work_item,
@@ -195,6 +216,8 @@ async fn run(cli: Cli) -> Result<(), AzdoError> {
                 .await
             }
         },
+        // `run` is dispatched synchronously in `dispatch`; never reaches here.
+        Command::Run { .. } => Ok(()),
     }
 }
 
