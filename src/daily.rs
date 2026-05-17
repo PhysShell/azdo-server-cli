@@ -392,5 +392,43 @@ mod tests {
                 "pick_latest must return the chronologically newest path",
             );
         }
+
+        /// Totality on adversarial input: wiki page leaves are external
+        /// strings, so `parse_date` must be total — never panic, and only
+        /// ever accept a genuine date (anything it returns must re-format
+        /// and re-parse to itself). The numeric-heavy arm stresses the
+        /// `split('.')` + integer-parse path (overflow must yield `None`,
+        /// not a panic).
+        #[test]
+        fn parse_date_is_total_and_sound(
+            s in prop_oneof![r"[0-9.]{0,16}", ".*"],
+        ) {
+            if let Some(d) = parse_date(&s) {
+                prop_assert_eq!(
+                    parse_date(&fmt_date(d)),
+                    Some(d),
+                    "an accepted string must denote a real, round-tripping date ({:?})",
+                    s,
+                );
+            }
+        }
+
+        /// `pick_latest` over arbitrary path strings is total and never
+        /// fabricates: any winner it returns is one of its inputs.
+        #[test]
+        fn pick_latest_is_total_and_never_fabricates(
+            paths in proptest::collection::vec(
+                prop_oneof![r"([0-9.]{0,12}/){0,3}[0-9.]{0,12}", ".*"],
+                0..12,
+            ),
+        ) {
+            if let Some(winner) = pick_latest(&paths) {
+                prop_assert!(
+                    paths.contains(&winner),
+                    "pick_latest must return one of its inputs, got {:?}",
+                    winner,
+                );
+            }
+        }
     }
 }
