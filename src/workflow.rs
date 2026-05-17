@@ -20,11 +20,12 @@ use std::fs;
 use std::path::Path;
 use std::rc::Rc;
 
-use rhai::{Dynamic, Engine, EvalAltResult, Map, Position, Scope};
+use rhai::{Array, Dynamic, Engine, EvalAltResult, Map, Position, Scope};
 use tokio::runtime::{Builder, Runtime};
 
 use crate::azdo::{build, wiki, workitem, AzdoClient};
 use crate::config::Config;
+use crate::daily;
 use crate::error::AzdoError;
 use crate::ops::{
     BuildParams, BuildRef, DryRun, EscapeOps, HttpReq, HttpResp, Ops, OpsError, Outcome, ReadOps,
@@ -225,10 +226,54 @@ fn task_to_map(t: Task) -> Result<Map, Box<EvalAltResult>> {
     Ok(m)
 }
 
+/// Register the wiki verbs (`wiki_list`/`wiki_read`/`wiki_create`, over the
+/// `Ops` seam) and the pure host helpers (`daily_target_path`/`pick_latest`,
+/// whose gnarly date/path math lives in `crate::daily` so property-based
+/// tests pin it — the script only orchestrates the flow).
+fn register_daily_surface(engine: &mut Engine, ops: &Rc<dyn Ops>) {
+    let ops_wlist = Rc::clone(ops);
+    engine.register_fn(
+        "wiki_list",
+        move |root: &str| -> Result<Array, Box<EvalAltResult>> {
+            let paths = ops_wlist.wiki_list(root).map_err(|e| ops_to_rhai(&e))?;
+            Ok(paths.into_iter().map(Dynamic::from).collect())
+        },
+    );
+
+    let ops_wread = Rc::clone(ops);
+    engine.register_fn(
+        "wiki_read",
+        move |path: &str| -> Result<String, Box<EvalAltResult>> {
+            ops_wread.wiki_get(path).map_err(|e| ops_to_rhai(&e))
+        },
+    );
+
+    let ops_wcreate = Rc::clone(ops);
+    engine.register_fn(
+        "wiki_create",
+        move |path: &str, content: &str| -> Result<(), Box<EvalAltResult>> {
+            ops_wcreate
+                .wiki_put(path, content)
+                .map_err(|e| ops_to_rhai(&e))
+        },
+    );
+
+    engine.register_fn("daily_target_path", move |root: &str| -> String {
+        daily::daily_page_path(root, daily::today_utc())
+    });
+    engine.register_fn("pick_latest", move |paths: Array| -> Dynamic {
+        let owned: Vec<String> = paths
+            .into_iter()
+            .filter_map(|d| d.into_string().ok())
+            .collect();
+        daily::pick_latest(&owned).map_or(Dynamic::UNIT, Dynamic::from)
+    });
+}
+
 /// Build the engine, run `src`, and reduce the result to an [`Outcome`].
 /// Pure over any `Rc<dyn Ops>`, so tests drive it with a recording fake and
 /// no network.
-fn run_source(ops: &Rc<dyn Ops>, dry_run: bool, src: &str) -> Outcome {
+fn run_source(ops: &Rc<dyn Ops>, dry_run: bool, daily_root: Option<&str>, src: &str) -> Outcome {
     let mut engine = Engine::new();
 
     let ops_print = Rc::clone(ops);
@@ -258,6 +303,8 @@ fn run_source(ops: &Rc<dyn Ops>, dry_run: bool, src: &str) -> Outcome {
         },
     );
 
+    register_daily_surface(&mut engine, ops);
+
     let result: Rc<RefCell<Option<Outcome>>> = Rc::new(RefCell::new(None));
 
     let r_fail = Rc::clone(&result);
@@ -273,6 +320,9 @@ fn run_source(ops: &Rc<dyn Ops>, dry_run: bool, src: &str) -> Outcome {
 
     let mut scope = Scope::new();
     scope.push_constant("DRY_RUN", dry_run);
+    if let Some(root) = daily_root {
+        scope.push_constant("DAILY_ROOT", root.to_owned());
+    }
 
     match engine.run_with_scope(&mut scope, src) {
         Ok(()) => result.borrow_mut().take().unwrap_or(Outcome::Done),
@@ -297,7 +347,8 @@ pub(crate) fn run_file(
     } else {
         Rc::new(real)
     };
-    let outcome = run_source(&ops, dry_run, &src);
+    let daily_root = cfg.wiki.as_ref().map(|w| w.daily_path.as_str());
+    let outcome = run_source(&ops, dry_run, daily_root, &src);
     match &outcome {
         Outcome::Done => {}
         Outcome::Stop(reason) => println!("stop: {reason}"),
@@ -317,14 +368,17 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use super::{run_source, BuildParams, BuildRef, EscapeOps, HttpReq, HttpResp, Ops, OpsError};
-    use super::{Outcome, ReadOps, ShOut, Task, WorkItemId, WriteOps};
+    use super::{daily, run_source, BuildParams, BuildRef, EscapeOps, HttpReq, HttpResp, Ops};
+    use super::{OpsError, Outcome, ReadOps, ShOut, Task, WorkItemId, WriteOps};
 
     /// Records every call; `task` returns a canned item unless `task_fails`.
+    /// `pages`/`body` seed the wiki reads for the daily-workflow tests.
     #[derive(Default)]
     struct Fake {
         calls: RefCell<Vec<String>>,
         task_fails: bool,
+        pages: Vec<String>,
+        body: String,
     }
 
     impl Fake {
@@ -356,11 +410,13 @@ mod tests {
         fn my_open(&self) -> Result<Vec<Task>, OpsError> {
             Err(OpsError::Io("x".to_owned()))
         }
-        fn wiki_get(&self, _p: &str) -> Result<String, OpsError> {
-            Err(OpsError::Io("x".to_owned()))
+        fn wiki_get(&self, p: &str) -> Result<String, OpsError> {
+            self.log(&format!("wiki_get {p}"));
+            Ok(self.body.clone())
         }
-        fn wiki_list(&self, _r: &str) -> Result<Vec<String>, OpsError> {
-            Err(OpsError::Io("x".to_owned()))
+        fn wiki_list(&self, r: &str) -> Result<Vec<String>, OpsError> {
+            self.log(&format!("wiki_list {r}"));
+            Ok(self.pages.clone())
         }
         fn print(&self, msg: &str) {
             self.log(&format!("print {msg}"));
@@ -390,8 +446,9 @@ mod tests {
                 url: "b".to_owned(),
             })
         }
-        fn wiki_put(&self, _p: &str, _c: &str) -> Result<(), OpsError> {
-            Err(OpsError::Io("x".to_owned()))
+        fn wiki_put(&self, p: &str, c: &str) -> Result<(), OpsError> {
+            self.log(&format!("wiki_put {p} {c}"));
+            Ok(())
         }
     }
 
@@ -407,7 +464,23 @@ mod tests {
     fn drive(fake: &Rc<Fake>, dry_run: bool, src: &str) -> Outcome {
         let concrete: Rc<Fake> = Rc::clone(fake);
         let ops: Rc<dyn Ops> = concrete;
-        run_source(&ops, dry_run, src)
+        run_source(&ops, dry_run, None, src)
+    }
+
+    fn drive_root(fake: &Rc<Fake>, dry_run: bool, root: &str, src: &str) -> Outcome {
+        let concrete: Rc<Fake> = Rc::clone(fake);
+        let ops: Rc<dyn Ops> = concrete;
+        run_source(&ops, dry_run, Some(root), src)
+    }
+
+    /// The shipped daily workflow, exercised verbatim so the artifact
+    /// itself is under test, not a paraphrase.
+    const DAILY_SRC: &str = include_str!("../examples/daily.rhai");
+
+    /// Today's expected target path, computed through the same pure core
+    /// the script calls, so the assertion tracks the clock.
+    fn today_target(root: &str) -> String {
+        daily::daily_page_path(root, daily::today_utc())
     }
 
     #[test]
@@ -504,6 +577,7 @@ mod tests {
         let fake = Rc::new(Fake {
             calls: RefCell::new(vec![]),
             task_fails: true,
+            ..Default::default()
         });
         let outcome = drive(&fake, false, "task(7);");
         match outcome {
@@ -513,5 +587,100 @@ mod tests {
             ),
             other => panic!("expected Fail, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn daily_creates_today_from_the_latest_page() {
+        let root = "Daily";
+        let fake = Rc::new(Fake {
+            pages: vec![
+                "Daily/2099/Q1/05.02.2099".to_owned(),
+                "Daily/2099/Q3/30.09.2099".to_owned(),
+                "Daily/2099/Q2/14.05.2099".to_owned(),
+            ],
+            body: "yesterday's notes".to_owned(),
+            ..Default::default()
+        });
+        let outcome = drive_root(&fake, false, root, DAILY_SRC);
+        assert_eq!(outcome, Outcome::Done, "a clean daily run ends Done");
+
+        let target = today_target(root);
+        let calls = fake.calls();
+        assert!(
+            calls.contains(&"wiki_list Daily".to_owned()),
+            "must list the subtree once, got {calls:?}",
+        );
+        assert!(
+            calls.contains(&"wiki_get Daily/2099/Q3/30.09.2099".to_owned()),
+            "must read the chronologically latest page (not the lexical \
+             max, not last in the list), got {calls:?}",
+        );
+        assert!(
+            calls.contains(&format!("wiki_put {target} yesterday's notes")),
+            "must create today's page seeded with the latest body, got {calls:?}",
+        );
+    }
+
+    #[test]
+    fn daily_refuses_to_overwrite_an_existing_page() {
+        let root = "Daily";
+        let target = today_target(root);
+        let fake = Rc::new(Fake {
+            pages: vec![target.clone(), "Daily/2099/Q1/01.01.2099".to_owned()],
+            body: "x".to_owned(),
+            ..Default::default()
+        });
+        let outcome = drive_root(&fake, false, root, DAILY_SRC);
+        match outcome {
+            Outcome::Stop(msg) => assert!(
+                msg.contains(&target),
+                "the stop reason must name the existing page, got {msg:?}",
+            ),
+            other => panic!("expected Stop, got {other:?}"),
+        }
+        assert!(
+            !fake.calls().iter().any(|c| c.starts_with("wiki_put ")),
+            "an existing page must never be overwritten, got {:?}",
+            fake.calls(),
+        );
+    }
+
+    #[test]
+    fn daily_fails_when_there_is_nothing_to_copy() {
+        let fake = Rc::new(Fake {
+            pages: vec![],
+            body: String::new(),
+            ..Default::default()
+        });
+        let outcome = drive_root(&fake, false, "Daily", DAILY_SRC);
+        match outcome {
+            Outcome::Fail(msg) => assert!(
+                msg.contains("no existing daily page"),
+                "must fail clearly when the tree has no prior page, got {msg:?}",
+            ),
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn daily_dry_run_previews_without_creating() {
+        let root = "Daily";
+        let fake = Rc::new(Fake {
+            pages: vec!["Daily/2099/Q2/14.05.2099".to_owned()],
+            body: "seed".to_owned(),
+            ..Default::default()
+        });
+        let outcome = drive_root(&fake, true, root, DAILY_SRC);
+        assert_eq!(outcome, Outcome::Done, "a dry-run still completes");
+
+        let calls = fake.calls();
+        assert!(
+            !calls.iter().any(|c| c.starts_with("wiki_put ")),
+            "dry-run must not create the page, got {calls:?}",
+        );
+        assert!(
+            calls.iter().any(|c| c.contains("[dry-run]")),
+            "dry-run must announce the preview, got {calls:?}",
+        );
     }
 }
