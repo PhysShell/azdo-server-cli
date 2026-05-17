@@ -21,6 +21,8 @@ pub(crate) struct Config {
     #[serde(default)]
     pub(crate) wiki: Option<WikiConfig>,
     #[serde(default)]
+    pub(crate) workflows: Option<WorkflowsConfig>,
+    #[serde(default)]
     pub(crate) states: BTreeMap<String, String>,
     #[serde(default)]
     pub(crate) products: BTreeMap<String, ProductConfig>,
@@ -48,6 +50,14 @@ impl Default for AuthConfig {
 pub(crate) struct WikiConfig {
     pub(crate) id: String,
     pub(crate) daily_path: String,
+}
+
+/// Where named workflows (`azdo run <name>`) are resolved from. When the
+/// `[workflows]` section is absent a platform default next to the config
+/// file is used.
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkflowsConfig {
+    pub(crate) dir: String,
 }
 
 #[allow(dead_code, reason = "wired up by later commands")]
@@ -151,6 +161,38 @@ impl Config {
             },
         )
     }
+
+    /// The directory named workflows resolve from: the configured
+    /// `[workflows].dir` if present, otherwise the platform default
+    /// alongside the config file. `None` only if neither is resolvable.
+    pub(crate) fn workflows_dir(&self) -> Option<PathBuf> {
+        self.workflows
+            .as_ref()
+            .map_or_else(default_workflows_dir, |w| Some(PathBuf::from(&w.dir)))
+    }
+}
+
+/// Platform default workflows directory (mirrors [`default_config_path`],
+/// `workflows/` instead of `config.toml`).
+fn default_workflows_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        env::var_os("APPDATA").map(|s| PathBuf::from(s).join("azdo").join("workflows"))
+    }
+    #[cfg(not(windows))]
+    {
+        env::var_os("XDG_CONFIG_HOME").map_or_else(
+            || {
+                env::var_os("HOME").map(|h| {
+                    PathBuf::from(h)
+                        .join(".config")
+                        .join("azdo")
+                        .join("workflows")
+                })
+            },
+            |xdg| Some(PathBuf::from(xdg).join("azdo").join("workflows")),
+        )
+    }
 }
 
 /// Resolve default config path.
@@ -206,6 +248,9 @@ pat_env = "AZDO_PAT"
 id = "TeamWiki"
 daily_path = "/Meetings/Daily"
 
+[workflows]
+dir = "/srv/azdo-workflows"
+
 [states]
 test = "Ready for Test"
 active = "Active"
@@ -242,6 +287,11 @@ users = ["Ivan Petrov", "Maria Ivanova"]
         assert_eq!(
             cfg.profiles.get("support").map(|p| p.users.as_slice()),
             Some(&["Ivan Petrov".to_owned(), "Maria Ivanova".to_owned()][..]),
+        );
+        assert_eq!(
+            cfg.workflows_dir(),
+            Some(super::PathBuf::from("/srv/azdo-workflows")),
+            "configured [workflows].dir wins over the platform default",
         );
     }
 
@@ -307,6 +357,7 @@ project = "P"
                 pat_env: "AZDO_PAT".to_owned(),
             },
             wiki: None,
+            workflows: None,
             states: super::BTreeMap::new(),
             products: super::BTreeMap::new(),
             profiles: super::BTreeMap::new(),

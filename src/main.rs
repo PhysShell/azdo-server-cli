@@ -87,10 +87,16 @@ enum Command {
         action: BuildAction,
     },
 
-    /// Run a workflow script (Rhai spike: minimal host surface).
+    /// Run a workflow: a name resolved in the workflows directory, or a
+    /// path to a `.rhai` file. `--list` shows the available names.
     Run {
-        /// Path to the `.rhai` workflow file.
-        file: PathBuf,
+        /// Workflow name (e.g. `daily`) or a path to a `.rhai` file.
+        /// Omit together with `--list`.
+        workflow: Option<String>,
+
+        /// List the named workflows in the workflows directory and exit.
+        #[arg(long)]
+        list: bool,
 
         /// Preview: reads and the escape hatch run for real, every AzDO
         /// mutation is stubbed.
@@ -156,23 +162,39 @@ fn main() -> ExitCode {
     }
 }
 
-/// Sync setup, then either run the workflow spike synchronously (it owns its
-/// own runtime — see `workflow`) or drive a network command on a shared
+/// Sync setup, then either run a workflow synchronously (it owns its own
+/// runtime — see `workflow`) or drive a network command on a shared
 /// current-thread runtime. The two paths are kept separate so a per-op
 /// `block_on` inside `RealOps` is never nested in an outer `block_on`.
+/// `azdo run --list` and name/path resolution need neither PAT nor client,
+/// so they are handled before either is built.
 fn dispatch(cli: Cli) -> Result<ExitCode, AzdoError> {
     let mut cfg = Config::load(cli.config.as_deref())?;
     apply_overrides(&mut cfg, &cli);
     cfg.validate()?;
 
-    let pat = cfg.read_pat()?;
-    let client = AzdoClient::new(&cfg, &pat)?;
-
     match cli.command {
-        Command::Run { file, dry_run } => Ok(ExitCode::from(workflow::run_file(
-            &client, &cfg, &file, dry_run,
-        )?)),
+        Command::Run {
+            workflow: target,
+            list,
+            dry_run,
+        } => {
+            if list {
+                return Ok(ExitCode::from(workflow::list_workflows(&cfg)?));
+            }
+            let target = target.ok_or_else(|| {
+                AzdoError::Input("specify a workflow name or path, or pass `--list`".to_owned())
+            })?;
+            let path = workflow::resolve_workflow(&cfg, &target)?;
+            let pat = cfg.read_pat()?;
+            let client = AzdoClient::new(&cfg, &pat)?;
+            Ok(ExitCode::from(workflow::run_file(
+                &client, &cfg, &path, dry_run,
+            )?))
+        }
         command => {
+            let pat = cfg.read_pat()?;
+            let client = AzdoClient::new(&cfg, &pat)?;
             let runtime = RuntimeBuilder::new_current_thread().enable_all().build()?;
             runtime.block_on(run_net(&client, &cfg, command))?;
             Ok(ExitCode::SUCCESS)

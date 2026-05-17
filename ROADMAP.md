@@ -159,7 +159,7 @@ prints `build #<n> succeeded [<number>]`.
 
 ---
 
-### [ ] S9 — `azdo daily` (wiki)
+### [x] S9 — `azdo daily` (wiki)
 
 Copy yesterday's daily wiki page to today's path (`prev_workday` aware:
 Monday picks up Friday). Idempotent: re-running on the same day is a no-op.
@@ -197,6 +197,17 @@ above is superseded where it conflicts):
   `fmt`/`parse` round-trip, target-path shape, and `pick_latest` global-max
   across quarter/year boundaries. Network and engine wiring get
   recording-fake example tests, as the spike did.
+
+**Delivered.** `src/daily.rs` (pure core + 6 proptest properties),
+`src/azdo/wiki.rs` (`get`/`list`/`put`), the `wiki_list` seam method,
+`examples/daily.rhai`, and the minimal named-workflow engine:
+`azdo run <name>` resolves `{[workflows].dir}/<name>.rhai` (a path-like
+target — `.rhai` ext or a separator — is used verbatim), `azdo run
+--list` enumerates them, and both need neither PAT nor client. The
+shipped script is exercised verbatim by the integration tests. Still
+out of scope (S10/S11): op/time limits, a fuller stdlib, and the
+remaining `Ops` methods (`set_state`/`comment`/escape) — those land
+with S10's composite workflow.
 
 ---
 

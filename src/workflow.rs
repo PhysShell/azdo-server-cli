@@ -16,8 +16,10 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fs;
-use std::path::Path;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 use std::rc::Rc;
 
 use rhai::{Array, Dynamic, Engine, EvalAltResult, Map, Position, Scope};
@@ -357,6 +359,78 @@ pub(crate) fn run_file(
     Ok(outcome.exit_code())
 }
 
+/// A `run` target is treated as a *path* (used verbatim) when it carries a
+/// `.rhai` extension or any path separator; otherwise it is a bare *name*
+/// resolved inside the workflows directory. Pure so the rule is testable.
+fn looks_like_path(target: &str) -> bool {
+    let has_rhai_ext = Path::new(target)
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("rhai"));
+    has_rhai_ext || target.contains('/') || target.contains(MAIN_SEPARATOR)
+}
+
+/// Resolve a `run` target to a file: a path-like target as-is, a bare name
+/// as `{workflows_dir}/{name}.rhai`.
+pub(crate) fn resolve_workflow(cfg: &Config, target: &str) -> Result<PathBuf, AzdoError> {
+    if looks_like_path(target) {
+        return Ok(PathBuf::from(target));
+    }
+    let dir = cfg.workflows_dir().ok_or_else(|| {
+        AzdoError::Config(
+            "cannot resolve the workflows directory; set `[workflows].dir`".to_owned(),
+        )
+    })?;
+    Ok(dir.join(format!("{target}.rhai")))
+}
+
+/// The sorted stems of every `*.rhai` file among `paths`. Pure (the
+/// filesystem read is the caller's job) so the filter/sort is testable.
+fn rhai_stems<I: IntoIterator<Item = PathBuf>>(paths: I) -> Vec<String> {
+    let mut names: Vec<String> = paths
+        .into_iter()
+        .filter(|p| p.extension().and_then(OsStr::to_str) == Some("rhai"))
+        .filter_map(|p| p.file_stem().and_then(OsStr::to_str).map(str::to_owned))
+        .collect();
+    names.sort();
+    names
+}
+
+/// `azdo run --list`: print the named workflows in the workflows directory.
+/// A missing directory is reported, not an error (nothing is configured
+/// yet); returns the process exit code.
+pub(crate) fn list_workflows(cfg: &Config) -> Result<u8, AzdoError> {
+    let dir = cfg.workflows_dir().ok_or_else(|| {
+        AzdoError::Config(
+            "cannot resolve the workflows directory; set `[workflows].dir`".to_owned(),
+        )
+    })?;
+    let read = match fs::read_dir(&dir) {
+        Ok(r) => r,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            println!(
+                "no workflows directory at {} — create it or set `[workflows].dir`",
+                dir.display(),
+            );
+            return Ok(0);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let mut paths = Vec::new();
+    for entry in read {
+        paths.push(entry?.path());
+    }
+    let names = rhai_stems(paths);
+    if names.is_empty() {
+        println!("no `.rhai` workflows in {}", dir.display());
+    } else {
+        for n in &names {
+            println!("{n}");
+        }
+    }
+    Ok(0)
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -370,6 +444,7 @@ mod tests {
 
     use super::{daily, run_source, BuildParams, BuildRef, EscapeOps, HttpReq, HttpResp, Ops};
     use super::{OpsError, Outcome, ReadOps, ShOut, Task, WorkItemId, WriteOps};
+    use crate::config::Config;
 
     /// Records every call; `task` returns a canned item unless `task_fails`.
     /// `pages`/`body` seed the wiki reads for the daily-workflow tests.
@@ -681,6 +756,63 @@ mod tests {
         assert!(
             calls.iter().any(|c| c.contains("[dry-run]")),
             "dry-run must announce the preview, got {calls:?}",
+        );
+    }
+
+    fn cfg_with_workflows_dir() -> Config {
+        Config::from_str_for_tests(
+            r#"
+server = "https://x/tfs"
+collection = "C"
+project = "P"
+[workflows]
+dir = "/wf"
+"#,
+        )
+        .unwrap_or_else(|e| panic!("must parse: {e}"))
+    }
+
+    #[test]
+    fn looks_like_path_distinguishes_names_from_paths() {
+        assert!(super::looks_like_path("daily.rhai"), "a .rhai is a path");
+        assert!(super::looks_like_path("dir/daily"), "a slash is a path");
+        assert!(
+            !super::looks_like_path("daily"),
+            "a bare name is a workflow name",
+        );
+        assert!(
+            !super::looks_like_path("send-test"),
+            "a bare name is a workflow name",
+        );
+    }
+
+    #[test]
+    fn resolve_workflow_name_vs_path() {
+        let cfg = cfg_with_workflows_dir();
+        assert_eq!(
+            super::resolve_workflow(&cfg, "daily").unwrap_or_else(|e| panic!("{e}")),
+            super::PathBuf::from("/wf/daily.rhai"),
+            "a bare name resolves inside the workflows dir",
+        );
+        assert_eq!(
+            super::resolve_workflow(&cfg, "sub/x.rhai").unwrap_or_else(|e| panic!("{e}")),
+            super::PathBuf::from("sub/x.rhai"),
+            "a path-like target is used verbatim",
+        );
+    }
+
+    #[test]
+    fn rhai_stems_filters_and_sorts() {
+        let paths = vec![
+            super::PathBuf::from("/wf/send-test.rhai"),
+            super::PathBuf::from("/wf/README.md"),
+            super::PathBuf::from("/wf/daily.rhai"),
+            super::PathBuf::from("/wf/notes.txt"),
+        ];
+        assert_eq!(
+            super::rhai_stems(paths),
+            vec!["daily".to_owned(), "send-test".to_owned()],
+            "only .rhai stems survive, sorted",
         );
     }
 }
