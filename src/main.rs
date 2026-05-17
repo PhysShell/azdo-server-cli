@@ -1,6 +1,7 @@
 mod azdo;
 mod browser;
 mod config;
+mod daily;
 mod error;
 mod ops;
 mod tui;

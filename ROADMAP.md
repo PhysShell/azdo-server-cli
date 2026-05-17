@@ -166,6 +166,38 @@ Monday picks up Friday). Idempotent: re-running on the same day is a no-op.
 Date substitution is restricted to `YYYY-MM-DD` literals — no global
 text replacement.
 
+**Design locked — S9 is the first real Rhai workflow** (it dogfoods the
+spike surface and is what pulls the minimal engine into being; the prose
+above is superseded where it conflicts):
+
+- **Wiki shape.** `{root}/{YYYY}/Q{n}/{dd.MM.yyyy}`. The **target** path is
+  a pure function of *today's date alone*, so a new quarter or year folder
+  is never a special case — it falls out of `quarter(today)`/`today.year`.
+  The **source** is `pick_latest`: the chronological max over *every*
+  existing page, ordered by parsed date (never lexically — `01.01.2026`
+  beats `31.12.2025`), so it crosses quarter/year rollovers by
+  construction. Target and source are computed independently; there is no
+  rollover branch. `prev_workday` is subsumed (the latest page is the
+  latest page, weekends/gaps included).
+- **Where the logic lives.** The invariant-bearing date/path core is pure
+  Rust (`src/daily.rs`) precisely so property-based tests can pin it; the
+  workflow *shape* (sequence, the don't-overwrite guard, messages) stays in
+  the editable `.rhai`. "Policy in the script" means flow, not the gnarly
+  date math — PBT lives in Rust, so the math must too.
+- **Ops seam.** Only one genuinely new method — `wiki_list` (recursive page
+  listing). `wiki_get`/`wiki_put` are already in the contract, currently
+  `UNWIRED` in `RealOps`; S9 makes them real. Script-facing verbs:
+  `wiki_list` / `wiki_read` / `wiki_create`.
+- **Behaviour.** The tool *creates* the page (a real write, seeded with the
+  latest page's content); the human does the final edit + save in the
+  browser. Re-running is not a silent no-op: the script checks the listing
+  and refuses to overwrite an existing page (a clean `Stop`/`fail`, not a
+  clobber). UTC date is a deliberate spike simplification.
+- **PBT scope.** Pure logic only: civil↔serial bijection, monotonicity,
+  `fmt`/`parse` round-trip, target-path shape, and `pick_latest` global-max
+  across quarter/year boundaries. Network and engine wiring get
+  recording-fake example tests, as the spike did.
+
 ---
 
 ### [ ] S10 — `azdo send-test <id>` (composite)
