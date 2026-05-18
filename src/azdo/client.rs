@@ -58,7 +58,6 @@ impl AzdoClient {
         )
     }
 
-    #[allow(dead_code, reason = "used by later commands")]
     pub(crate) fn project_url(&self, path: &str) -> String {
         format!(
             "{}/{}/{}{}",
@@ -73,7 +72,14 @@ impl AzdoClient {
         &self.project
     }
 
-    #[allow(dead_code, reason = "used by later commands")]
+    /// Browser URL for a work item's edit page.
+    pub(crate) fn web_item_url(&self, id: u64) -> String {
+        format!(
+            "{}/{}/{}/_workitems/edit/{id}",
+            self.server, self.collection, self.project,
+        )
+    }
+
     pub(crate) fn api_version(&self) -> &str {
         &self.api_version
     }
@@ -129,10 +135,14 @@ fn ensure_leading_slash(s: &str) -> String {
     clippy::panic,
     clippy::unwrap_used,
     clippy::expect_used,
-    reason = "tests legitimately panic on bad fixtures"
+    clippy::absolute_paths,
+    clippy::arithmetic_side_effects,
+    reason = "tests legitimately panic on bad fixtures; proptest macro emits absolute paths"
 )]
 mod tests {
-    use super::{AzdoClient, Config, Pat};
+    use proptest::prelude::*;
+
+    use super::{ensure_leading_slash, trim_slash, AzdoClient, Config, Pat};
 
     fn cfg() -> Config {
         Config::from_str_for_tests(
@@ -167,10 +177,78 @@ project = "Customs"
     }
 
     #[test]
+    fn builds_web_item_url() {
+        assert_eq!(
+            client().web_item_url(777),
+            "https://azdo.company.local/tfs/DefaultCollection/Customs/_workitems/edit/777",
+            "browser URL must be {{server}}/{{collection}}/{{project}}/_workitems/edit/{{id}}",
+        );
+    }
+
+    #[test]
     fn url_normalizes_missing_leading_slash() {
         assert_eq!(
             client().project_url("_apis/wit"),
             "https://azdo.company.local/tfs/DefaultCollection/Customs/_apis/wit",
         );
+    }
+
+    proptest! {
+        /// `trim_slash` only ever strips a run of trailing `/`, nothing else.
+        #[test]
+        fn trim_slash_props(s in ".*") {
+            let out = trim_slash(&s);
+
+            // 1. The result never ends with a slash.
+            prop_assert!(!out.ends_with('/'), "still ends with '/': {:?}", out);
+
+            // 2. It is a prefix of the input (only the tail was touched).
+            prop_assert!(s.starts_with(out), "{:?} is not a prefix of {:?}", out, s);
+
+            // 3. Everything that was removed was a slash.
+            let removed = s.strip_prefix(out).expect("out is a prefix of s");
+            prop_assert!(
+                removed.chars().all(|c| c == '/'),
+                "removed non-slash content: {:?}",
+                removed,
+            );
+
+            // 4. Idempotent.
+            prop_assert_eq!(trim_slash(out), out);
+        }
+
+        /// `ensure_leading_slash` guarantees exactly one leading slash for
+        /// non-empty input and is content-preserving.
+        #[test]
+        fn ensure_leading_slash_props(s in ".*") {
+            let out = ensure_leading_slash(&s);
+
+            if s.is_empty() {
+                prop_assert!(out.is_empty(), "empty input must stay empty");
+            } else {
+                prop_assert!(
+                    out.starts_with('/'),
+                    "missing leading slash: {:?}",
+                    out,
+                );
+                // Tail is preserved verbatim.
+                prop_assert!(
+                    out.ends_with(&s),
+                    "{:?} does not end with {:?}",
+                    out,
+                    s,
+                );
+                // At most one character (the slash) is ever added.
+                prop_assert!(
+                    out.chars().count() <= s.chars().count() + 1,
+                    "added more than one char: {:?} -> {:?}",
+                    s,
+                    out,
+                );
+            }
+
+            // Idempotent: a value that already has a leading slash is unchanged.
+            prop_assert_eq!(ensure_leading_slash(&out), out);
+        }
     }
 }

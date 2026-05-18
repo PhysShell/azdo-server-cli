@@ -63,6 +63,106 @@ azdo ping
 # OK 200 (project "Customs" accessible)
 ```
 
+List your open work items (assigned to you, not Closed/Done/Removed,
+most recently changed first):
+
+```sh
+azdo my
+# ID     Type  State   Title
+# 12345  Bug   Active  Customs declaration form rejects valid TIN
+# 67890  Task  New     Add retry to upload
+```
+
+Add `--pick` to choose one interactively (`j`/`k` to move, `Enter` to
+open it in the TUI viewer, `q`/`Esc` to quit):
+
+```sh
+azdo my --pick
+```
+
+Show a work item as a readable plain-text block:
+
+```sh
+azdo task 12345
+# #12345  [Bug]  State: Active
+# Title:    Customs declaration form rejects valid TIN
+# Assignee: Ivan Petrov
+# Changed:  2026-05-14T10:23:00Z
+# Tags:     customs, urgent
+#
+# Description:
+# The form rejects a valid TIN.
+```
+
+The HTML description is flattened to terminal text; optional fields
+(assignee, changed date, tags) are omitted when the server returns none.
+
+Open the interactive TUI viewer instead of plain text:
+
+```sh
+azdo task 12345 --tui
+```
+
+Hotkeys: `q`/`Esc` quit, `r` refresh, `c` comment, `o` open in browser,
+`Tab`/`Shift+Tab` switch pane, `j`/`k` (or arrows) scroll the active
+pane. The terminal is always restored on exit or panic.
+
+Open the work item in the system browser instead of rendering it
+(`xdg-open`, or `cmd /C start` on Windows; no network call):
+
+```sh
+azdo task 12345 --open
+```
+
+`--open` takes precedence over `--tui` and plain rendering; the same
+action is bound to `o` inside the TUI.
+
+Append recent comments with `--comments N` (oldest first):
+
+```sh
+azdo task 12345 --comments 5
+# ...work item block...
+#
+# Comments (2):
+#
+# [2026-05-13T09:00:00Z] Ivan Petrov
+# First comment.
+#
+# [2026-05-14T11:30:00Z] Maria Ivanova
+# Second comment.
+```
+
+Post a comment (the `comment` argument may be `-` to read the whole body
+from stdin):
+
+```sh
+azdo task 12345 comment "Reproduced on staging; raising priority."
+git log -1 --format=%B | azdo task 12345 comment -
+```
+
+A blank body is rejected rather than posted. In `--tui`, press `c`, type
+the comment, and `Enter` to post (the view re-fetches so it appears);
+`Esc` cancels.
+
+Change the work item state:
+
+```sh
+azdo task 12345 set-state "Ready for Test"
+azdo task 12345 set-state test          # via a [states] alias
+```
+
+`set-state` accepts a literal state name or an alias from the `[states]`
+table in the config, e.g.:
+
+```toml
+[states]
+test = "Ready for Test"
+active = "Active"
+```
+
+Anything not listed there is sent verbatim, so configuring aliases is
+optional. The server's stored state is printed back on success.
+
 Additional commands are added stage by stage; see [ROADMAP.md](ROADMAP.md) for
 what is already available.
 
